@@ -74,7 +74,7 @@ configA1() {
         --tensor-parallel-size 2 \
         --pipeline-parallel-size 2 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_colocated_A1.log"
+        2>&1 | tee "$LOG_DIR/vllm_configA1_$(hostname).log"
 }
 
 configA2() {
@@ -84,7 +84,7 @@ configA2() {
         --tensor-parallel-size 4 \
         --pipeline-parallel-size 1 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_colocated_A2.log"
+        2>&1 | tee "$LOG_DIR/vllm_configA2_$(hostname).log"
 }
 
 configA3() {
@@ -94,7 +94,7 @@ configA3() {
         --tensor-parallel-size 1 \
         --pipeline-parallel-size 4 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_colocated_A3.log"
+        2>&1 | tee "$LOG_DIR/vllm_configA3_$(hostname).log"
 }
 
 # Back-compat alias: configA → configA1 (TP=2 PP=2 default).
@@ -107,7 +107,7 @@ configB() {
     vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 1 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_colocated.log"
+        2>&1 | tee "$LOG_DIR/vllm_configB_$(hostname).log"
 }
 
 # ── Config C — same-node PD, GPU 0-1 prefill, GPU 2-3 decode ────────────────
@@ -164,7 +164,7 @@ YAML
         --tensor-parallel-size 2 \
         --kv-transfer-config '{"kv_connector":"InstrumentedLMCacheConnector","kv_connector_module_path":"instrumented_connector","kv_role":"kv_producer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"producerC"}}' \
         --port 8100 \
-        2>&1 | tee "$LOG_DIR/vllm_prefill.log"
+        2>&1 | tee "$LOG_DIR/vllm_configC_prefill_$(hostname).log"
 }
 
 configC_decode() {
@@ -190,7 +190,7 @@ YAML
         --tensor-parallel-size 2 \
         --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_consumer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"consumerC"}}' \
         --port 8200 \
-        2>&1 | tee "$LOG_DIR/vllm_decode.log"
+        2>&1 | tee "$LOG_DIR/vllm_configC_decode_$(hostname).log"
 }
 
 # ── Config D — cross-node PD, TCP ─────────────────────────────────────────────
@@ -225,7 +225,7 @@ YAML
         --tensor-parallel-size 1 \
         --kv-transfer-config '{"kv_connector":"InstrumentedLMCacheConnector","kv_connector_module_path":"instrumented_connector","kv_role":"kv_producer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"producerD"}}' \
         --port 8100 \
-        2>&1 | tee "$LOG_DIR/vllm_prefill.log"
+        2>&1 | tee "$LOG_DIR/vllm_configD_prefill_$(hostname).log"
 }
 
 configD_decode() {
@@ -252,7 +252,7 @@ YAML
         --tensor-parallel-size 1 \
         --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_consumer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"consumerD"}}' \
         --port 8200 \
-        2>&1 | tee "$LOG_DIR/vllm_decode.log"
+        2>&1 | tee "$LOG_DIR/vllm_configD_decode_$(hostname).log"
 }
 
 # ── proxy launcher (shared by C and D) ───────────────────────────────────────
@@ -267,7 +267,7 @@ launch_proxy() {
         --prefiller-port 8100 \
         --decoder-host "$decode_host" \
         --decoder-port 8200 \
-        2>&1 | tee "$LOG_DIR/pd_proxy.log"
+        2>&1 | tee "$LOG_DIR/pd_proxy_$(hostname).log"
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
