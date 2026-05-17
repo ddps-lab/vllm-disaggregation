@@ -372,8 +372,11 @@ async def main(args: argparse.Namespace) -> None:
     # ── 실험 영수증 생성 (나중에 "이 폴더가 뭐였지?" 할 때 보는 파일) ──
     meta_path = out_dir / "metadata.json"
     if not meta_path.exists():
-        tp_size = 2 if config in ["A1", "B", "C"] else 1
-        pp_size = 4 if config == "A3" else (2 if config == "A1" else 1)
+        # launch_configs.sh 실제 설정에 맞춘 매핑
+        tp_map = {"A1": 2, "A2": 4, "A3": 1, "B": 1, "C": 2, "D": 1}
+        pp_map = {"A1": 2, "A2": 1, "A3": 4, "B": 1, "C": 1, "D": 1}
+        tp_size = tp_map.get(config, 1)
+        pp_size = pp_map.get(config, 1)
         network = "shm" if config == "C" else ("TCP" if config == "D" else "None")
         meta = {
             "config": config,
