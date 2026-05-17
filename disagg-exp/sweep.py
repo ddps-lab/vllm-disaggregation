@@ -121,11 +121,11 @@ async def _do_request(
 
     try:
         # ② 서버에 HTTP POST 요청 전송 (스트리밍 연결 열기)
-        # 타임아웃: 120초 안에 전체 응답이 완료되지 않으면 timeout 처리
+        # 타임아웃: 300초(5분) 안에 전체 응답이 완료되지 않으면 timeout 처리
         async with session.post(
             f"{base_url}/v1/completions",
             json=payload,
-            timeout=aiohttp.ClientTimeout(total=120),
+            timeout=aiohttp.ClientTimeout(total=300),
         ) as resp:
             if resp.status != 200:
                 body = await resp.text()
