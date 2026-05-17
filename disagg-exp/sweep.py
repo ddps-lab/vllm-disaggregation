@@ -242,31 +242,26 @@ async def run_point(
     return not aborted
 
 
-# ── S3 sync (background thread) ───────────────────────────────────────────────
-# [자동 백업 클래스] 클라우드 서버가 갑자기 꺼지는 대참사를 막기 위해,
-# 벤치마크가 돌아가는 도중에도 30초마다 백그라운드에서 AWS S3 버킷으로 데이터를 안전하게 피신시킵니다.
+# ── S3 sync (백그라운드 자동 백업) ─────────────────────────────────────────────
+# 실험 도중 서버가 꺼져도 데이터가 살아남도록, 30초마다 ./results/ → S3로 복사합니다.
+# s5cmd(빠름)이 있으면 쓰고, 없으면 aws cli로 폴백합니다.
+# --s3-bucket "" 로 비활성화 가능합니다.
 class S3Syncer:
-    """Periodically syncs $EXP_LOG_DIR to S3 from a background thread.
 
-    Uses s5cmd if available, else falls back to `aws s3 sync`. Each sync invocation
-    is bounded by a timeout so a slow s5cmd cannot block sweep termination.
-    Designed to be no-op when bucket is empty/None — pass --s3-bucket "" to disable.
-    """
-
-    SYNC_TIMEOUT_S = 300  # per-invocation cap
+    SYNC_TIMEOUT_S = 300  # 1회 sync 최대 대기 시간
 
     def __init__(self, bucket: str, log_dir: str, config: str, interval: int = 30):
         self.bucket = bucket
         self.log_dir = log_dir
         self.interval = interval
-        # Organize by config, then specific datetime
+        # S3 저장 경로: s3://버킷/raw/configD/20260518_054200/
         date_time = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
         self.dest = f"s3://{bucket}/raw/{config}/{date_time}/"
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._final_done = False
         self._lock = threading.Lock()
-        self._cmd = self._pick_cmd()
+        self._cmd = self._pick_cmd()  # s5cmd 또는 aws cli 자동 탐색
         self._log_path = Path(log_dir) / "s3_sync.log"
         Path(log_dir).mkdir(parents=True, exist_ok=True)
 
@@ -289,6 +284,7 @@ class S3Syncer:
         print(f"[s3_sync] {msg}", flush=True)
 
     def _sync_once(self) -> None:
+        """로컬 폴더 전체를 S3로 1회 복사 (이동이 아님 — 로컬 원본은 유지)"""
         if not self._cmd:
             return
         argv = self._cmd + [f"{self.log_dir}/", self.dest]
@@ -364,15 +360,15 @@ async def wait_for_health(base_url: str, timeout_s: int = 300) -> None:
     raise RuntimeError(f"Server at {base_url} not healthy after {timeout_s}s")
 
 
-# ── main ──────────────────────────────────────────────────────────────────────
-# [메인 엔진] S3 백업을 켜고, 실험 영수증(metadata)을 만든 뒤, 준비된 수십 가지 Grid 조건표를 돌며 벤치마크를 수행합니다.
+# ── main (전체 실험 오케스트레이터) ────────────────────────────────────────────
+# 실행 순서: 영수증 생성 → S3 백업 시작 → 서버 대기 → Grid 조건표 생성 → 순차 실행
 async def main(args: argparse.Namespace) -> None:
     base_url = args.base_url.rstrip("/")
     config = args.config
-    out_dir = Path(LOG_DIR) / config
+    out_dir = Path(LOG_DIR) / config  # 예: ./results/D/
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Dump metadata (like an experiment receipt)
+    # ── 실험 영수증 생성 (나중에 "이 폴더가 뭐였지?" 할 때 보는 파일) ──
     meta_path = out_dir / "metadata.json"
     if not meta_path.exists():
         tp_size = 2 if config in ["A1", "B", "C"] else 1
@@ -389,8 +385,7 @@ async def main(args: argparse.Namespace) -> None:
         with open(meta_path, "w") as f:
             json.dump(meta, f, indent=2)
 
-    # Start S3 sync before the sweep so partial results are uploaded even if
-    # the run is interrupted. The Syncer's atexit hook handles abnormal exits.
+    # ── S3 백업 시작 (실험 도중 서버가 죽어도 데이터 보존) ──
     syncer = S3Syncer(
         bucket=args.s3_bucket or "",
         log_dir=LOG_DIR,
@@ -399,9 +394,13 @@ async def main(args: argparse.Namespace) -> None:
     )
     syncer.start()
 
+    # ── 서버가 켜질 때까지 대기 ──
     await wait_for_health(base_url)
 
-    # Build grid: cross1 (prefill × rate, decode fixed) + cross2 (decode × rate, prefill fixed)
+    # ── Grid 조건표 생성 ──
+    # cross1: 질문길이(3) × QPS(3), 답변=512 고정 → 9개
+    # cross2: 답변길이(4) × QPS(3), 질문=2048 고정 → 12개 (중복 제거)
+    # 합계: 약 18~21개 조건
     points: list[tuple[int, int, float]] = []
     fixed_decode = 512
     fixed_prefill = 2048
@@ -418,11 +417,12 @@ async def main(args: argparse.Namespace) -> None:
     done = 0
     skipped = 0
     for prefill_len, decode_len, rate in points:
-        point_id = f"p{prefill_len}_d{decode_len}_r{rate}"
-        out_path = out_dir / f"{point_id}.jsonl"
-        marker_done   = out_dir / f".done_{point_id}"
-        marker_failed = out_dir / f".failed_{point_id}"
+        point_id = f"p{prefill_len}_d{decode_len}_r{rate}"  # 파일명 = 실험 조건
+        out_path = out_dir / f"{point_id}.jsonl"             # 결과 저장 파일
+        marker_done   = out_dir / f".done_{point_id}"        # 완료 도장 (재실행 시 스킵)
+        marker_failed = out_dir / f".failed_{point_id}"      # 실패 도장
 
+        # 이미 완료된 조건은 건너뜀 → 중간에 끊겨도 이어서 실행 가능
         if marker_done.exists():
             skipped += 1
             continue
@@ -451,6 +451,7 @@ async def main(args: argparse.Namespace) -> None:
     syncer.stop()
 
 
+# ── 진입점: python sweep.py --config D --base-url http://localhost:8000 ──────
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="A|B|C|D")
@@ -461,4 +462,4 @@ if __name__ == "__main__":
         help='S3 bucket for background sync. Pass "" to disable.',
     )
     args = parser.parse_args()
-    asyncio.run(main(args))
+    asyncio.run(main(args))  # 비동기 이벤트 루프 시작 → main() 실행
