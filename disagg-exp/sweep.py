@@ -37,50 +37,57 @@ from pathlib import Path
 
 import aiohttp
 
-# ── grid ──────────────────────────────────────────────────────────────────────
-# [헬퍼 함수] 쉘 환경변수에서 콤마(,)로 구분된 텍스트를 파이썬 리스트로 변환 (예: "1.0,4.0" -> [1.0, 4.0])
+# ── grid (실험 조건표) ────────────────────────────────────────────────────────
+# 벤치마크에서 테스트할 조건들을 정의합니다.
+# 환경변수로 오버라이드 가능하며, 기본값은 아래와 같습니다.
+# 이 조합들의 교차곱(Cross Product)이 실험의 전체 Grid를 구성합니다.
+
+# [헬퍼] 환경변수에서 콤마 구분 텍스트를 파이썬 리스트로 변환 (예: "1.0,4.0" -> [1.0, 4.0])
 def _parse_list(env_key: str, default: list[float]) -> list[float]:
     raw = os.environ.get(env_key, "")
     if raw:
         return [float(x) for x in raw.split(",")]
     return default
 
-PREFILL_LENS = [int(x) for x in _parse_list("SWEEP_PREFILL_LENS", [512, 2048, 8192])]
-DECODE_LENS  = [int(x) for x in _parse_list("SWEEP_DECODE_LENS",  [128, 512, 1024, 4096])]
-RATES        = _parse_list("SWEEP_RATES", [1.0, 4.0, 8.0])
+PREFILL_LENS = [int(x) for x in _parse_list("SWEEP_PREFILL_LENS", [512, 2048, 8192])]  # 질문 길이 (토큰 수)
+DECODE_LENS  = [int(x) for x in _parse_list("SWEEP_DECODE_LENS",  [128, 512, 1024, 4096])]  # 답변 길이
+RATES        = _parse_list("SWEEP_RATES", [1.0, 4.0, 8.0])  # 초당 요청 수 (QPS)
 
-WARMUP_N   = int(os.environ.get("SWEEP_WARMUP_N",   "50"))
-MEASURED_N = int(os.environ.get("SWEEP_MEASURED_N", "200"))
+WARMUP_N   = int(os.environ.get("SWEEP_WARMUP_N",   "50"))   # 준비운동 요청 수
+MEASURED_N = int(os.environ.get("SWEEP_MEASURED_N", "200"))  # 실전 측정 요청 수
 
-# Abort measured phase if warmup shows these thresholds.
-ABORT_FAIL_RATE  = float(os.environ.get("SWEEP_ABORT_FAIL_RATE",  "0.30"))
-ABORT_TTFT_P99_S = float(os.environ.get("SWEEP_ABORT_TTFT_P99_S", "180.0"))
+# 웜업 단계에서 서버가 감당 못하면 실전을 스킵하는 기준
+ABORT_FAIL_RATE  = float(os.environ.get("SWEEP_ABORT_FAIL_RATE",  "0.30"))  # 에러율 30% 초과 시
+ABORT_TTFT_P99_S = float(os.environ.get("SWEEP_ABORT_TTFT_P99_S", "180.0"))  # TTFT p99가 3분 초과 시
 
-LOG_DIR = os.environ.get("EXP_LOG_DIR", "./results")
+LOG_DIR = os.environ.get("EXP_LOG_DIR", "./results")  # 모든 결과 파일의 저장 경로
 
-MODEL_NAME = "llama-3.1-8b"  # must match --served-model-name
+MODEL_NAME = "llama-3.1-8b"  # launch_configs.sh의 --served-model-name과 반드시 일치해야 함
 
 
-# ── request ───────────────────────────────────────────────────────────────────
+# ── request (요청 1개의 측정 결과를 담는 데이터 구조) ─────────────────────────
+# JSONL 파일에 저장될 때 이 필드들이 그대로 JSON 키가 됩니다.
 @dataclass
 class Result:
     req_id: str
-    phase: str          # "warmup" | "measured"
-    prefill_len: int
-    decode_len: int
-    rate: float
-    send_ts: float      # time.time() at send
-    ttft_s: float | None
-    e2e_s: float | None
-    prompt_tokens: int | None
-    completion_tokens: int | None
+    phase: str          # "warmup"(준비운동) | "measured"(실전 데이터)
+    prefill_len: int    # 요청한 질문 길이
+    decode_len: int     # 요청한 답변 길이
+    rate: float         # 목표 QPS
+    send_ts: float      # 요청을 보낸 정확한 시각 (처리량 계산용)
+    ttft_s: float | None       # 첫 토큰 도착 시간 (초) — 핵심 메트릭
+    e2e_s: float | None        # 전체 응답 완료 시간 (초)
+    prompt_tokens: int | None  # 서버가 실제 처리한 질문 토큰 수 (검증용)
+    completion_tokens: int | None  # 서버가 실제 생성한 답변 토큰 수
     status: str         # "success" | "error" | "timeout"
     error: str | None
 
 
-# [핵심 초시계 함수] LLM 서버에 실제로 API 요청 1개를 던지고 응답 시간을 잽니다.
-# 1. 서버 내부 메트릭은 PD 분리 구조를 모르기 때문에 여기서(클라이언트) 직접 잽니다.
-# 2. 첫 토큰 도착 시간(TTFT)과 최종 응답 완료 시간(E2E)을 정밀하게 기록합니다.
+# ── 클라이언트 초시계 (API 요청 1개의 TTFT/E2E 측정) ────────────────────────
+# vLLM 내부 메트릭은 PD 분리 시 전체 파이프라인(Prefill→KV전송→Decode)을 모르므로,
+# 여기서(클라이언트) SSE 스트리밍으로 직접 측정합니다.
+# 원리: stream=True로 요청하면 서버가 토큰을 하나 생성할 때마다 한 줄씩 보내줌.
+#       → "첫 줄 도착 시점" = TTFT, "마지막 줄 도착 시점" = E2E
 async def _do_request(
     session: aiohttp.ClientSession,
     base_url: str,
@@ -90,29 +97,30 @@ async def _do_request(
     decode_len: int,
     rate: float,
 ) -> Result:
-    # Build token-id prompt (BOS not prepended; server may add +1, that's fine).
-    # Use sequential IDs starting from 1 so we don't accidentally hit special tokens.
+    # 토큰 ID를 직접 넣어서 정확히 prefill_len개의 입력을 보장 (문장 토크나이징 불확실성 제거)
+    # 1부터 시작: 0번은 특수 토큰(BOS/PAD)이라 예상치 못한 동작 방지
     prompt_ids = list(range(1, prefill_len + 1))
 
     payload = {
         "model": MODEL_NAME,
-        "prompt": prompt_ids,
-        "max_tokens": decode_len,
-        "min_tokens": decode_len,
-        "temperature": 0,
+        "prompt": prompt_ids,        # 토큰 ID 리스트로 직접 전달 (문자열 아님)
+        "max_tokens": decode_len,    # 최대 생성 길이
+        "min_tokens": decode_len,    # 최소 생성 길이 (max=min → 정확히 고정)
+        "temperature": 0,            # 결정론적 생성 (재현성)
         "top_p": 1.0,
-        "ignore_eos": True,
-        "stream": True,
-        "stream_options": {"include_usage": True},
+        "ignore_eos": True,          # EOS 토큰이 나와도 멈추지 않고 끝까지 생성
+        "stream": True,              # SSE 스트리밍 활성화 (TTFT 측정의 핵심)
+        "stream_options": {"include_usage": True},  # 마지막 청크에 토큰 수 포함
     }
 
-    send_ts = time.time()
+    send_ts = time.time()  # ① 스톱워치 시작
     ttft_s: float | None = None
     e2e_s: float | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
 
     try:
+        # ② 서버에 HTTP POST 요청 전송 (스트리밍 연결 열기)
         async with session.post(
             f"{base_url}/v1/completions",
             json=payload,
@@ -124,33 +132,34 @@ async def _do_request(
                                send_ts, None, None, None, None,
                                "error", f"http_{resp.status}: {body[:200]}")
 
+            # ③ SSE 스트리밍: 서버가 토큰을 생성할 때마다 한 줄씩 실시간으로 도착
             got_first = False
-            async for raw_line in resp.content:
+            async for raw_line in resp.content:  # 한 줄 올 때마다 깨어남
                 line = raw_line.decode().strip()
                 if not line.startswith("data:"):
                     continue
                 data_str = line[5:].strip()
-                if data_str == "[DONE]":
+                if data_str == "[DONE]":  # 서버가 "끝!" 신호를 보냄
                     break
                 try:
                     chunk = json.loads(data_str)
                 except json.JSONDecodeError:
                     continue
 
+                # ④ 첫 토큰 도착 → TTFT 측정 (딱 한 번만 실행됨)
                 if not got_first:
-                    # First non-empty chunk marks first token received.
                     choices = chunk.get("choices", [])
                     if choices and choices[0].get("text", ""):
                         ttft_s = time.time() - send_ts
                         got_first = True
 
-                # Final chunk contains usage.
+                # 마지막 청크에 들어있는 토큰 사용량 정보 수집
                 usage = chunk.get("usage")
                 if usage:
                     prompt_tokens = usage.get("prompt_tokens")
                     completion_tokens = usage.get("completion_tokens")
 
-            e2e_s = time.time() - send_ts
+            e2e_s = time.time() - send_ts  # ⑤ 마지막 토큰까지 도착 → E2E 측정
 
     except asyncio.TimeoutError:
         return Result(req_id, phase, prefill_len, decode_len, rate,
@@ -164,9 +173,10 @@ async def _do_request(
                    "success", None)
 
 
-# ── single sweep point ────────────────────────────────────────────────────────
-# [트래픽 융단폭격 함수] 설정된 1개의 Grid 조건(예: 질문 512, 답변 128, QPS 4)을 테스트합니다.
-# 준비운동(warmup)으로 50번을 먼저 쏴보고, 서버가 터지지 않으면 실전(measured) 200번을 쏴서 JSONL로 저장합니다.
+# ── single sweep point (Grid 조건 1개 테스트) ─────────────────────────────────
+# 하나의 실험 조건(예: 질문512 답변128 QPS4)에 대해:
+# 1) 웜업 50발 → 서버 상태 확인 (에러율, TTFT 체크)
+# 2) 통과하면 실전 200발 → 결과를 JSONL 파일로 저장
 async def run_point(
     base_url: str,
     config: str,
@@ -177,30 +187,33 @@ async def run_point(
 ) -> bool:
     """Returns True if measured phase was completed (not aborted)."""
 
+    # limit=0: 동시 연결 수 제한 없음 (수백 개 요청이 동시에 날아감)
     connector = aiohttp.TCPConnector(limit=0)
     async with aiohttp.ClientSession(connector=connector) as session:
 
-        # [내부 함수] n개의 요청을 포아송 분포(실제 유저들의 불규칙한 접속 패턴)에 맞춰 비동기로 발사합니다.
+        # [내부 함수] n개의 요청을 포아송 분포(실제 유저들의 불규칙한 접속 패턴)에 맞춰 비동기로 발사
+        # random.expovariate(rate): QPS=4면 평균 0.25초 간격이지만, 실제로는 랜덤하게 몰리거나 빔
         async def fire_phase(phase: str, n: int) -> list[Result]:
             results: list[Result] = []
             tasks: list[asyncio.Task] = []
             for i in range(n):
                 req_id = f"{config}_{prefill_len}_{decode_len}_{rate}_{phase}_{i}"
-                delay = random.expovariate(rate)
+                delay = random.expovariate(rate)  # 포아송 분포 기반 랜덤 대기
                 await asyncio.sleep(delay)
-                t = asyncio.create_task(
+                t = asyncio.create_task(         # 비동기로 요청 발사 (안 기다리고 다음으로)
                     _do_request(session, base_url, req_id, phase,
                                 prefill_len, decode_len, rate)
                 )
                 tasks.append(t)
             for t in tasks:
-                results.append(await t)
+                results.append(await t)  # 모든 요청이 끝날 때까지 대기
             return results
 
-        # warmup
+        # ── 1단계: 준비운동 (웜업) ──
         warmup_results = await fire_phase("warmup", WARMUP_N)
 
-        # evaluate warmup health
+        # ── 2단계: 웜업 건강 검진 ──
+        # 에러율이 너무 높거나 TTFT가 비정상이면 → 실전 스킵 (서버 과부하 방지)
         ok = [r for r in warmup_results if r.status == "success"]
         fail_rate = 1.0 - len(ok) / max(len(warmup_results), 1)
         ttfts = sorted(r.ttft_s for r in ok if r.ttft_s is not None)
@@ -208,6 +221,7 @@ async def run_point(
 
         aborted = fail_rate > ABORT_FAIL_RATE or ttft_p99 > ABORT_TTFT_P99_S
 
+        # ── 3단계: 실전 측정 (또는 스킵) ──
         measured_results: list[Result] = []
         if not aborted:
             measured_results = await fire_phase("measured", MEASURED_N)
@@ -220,7 +234,7 @@ async def run_point(
 
         all_results = warmup_results + measured_results
 
-    # write jsonl
+    # ── 4단계: 결과를 JSONL 파일로 저장 (한 줄에 요청 1개의 전체 측정값) ──
     with open(out_path, "w") as f:
         for r in all_results:
             f.write(json.dumps(asdict(r)) + "\n")
