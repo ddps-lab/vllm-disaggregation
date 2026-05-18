@@ -8,7 +8,7 @@ Usage:
 Env overrides for the grid:
     SWEEP_PREFILL_LENS=512,2048,8192
     SWEEP_DECODE_LENS=128,512,1024,4096
-    SWEEP_RATES=1.0,4.0,8.0
+    SWEEP_RATES=1.0,2.0,4.0
 
 S3 sync (embedded — runs as a background thread while sweep is active):
     S3_BUCKET=hdjung-disaggregation-result   # default if --s3-bucket omitted
@@ -51,10 +51,10 @@ def _parse_list(env_key: str, default: list[float]) -> list[float]:
 
 PREFILL_LENS = [int(x) for x in _parse_list("SWEEP_PREFILL_LENS", [512, 2048, 8192])]  # 질문 길이 (토큰 수)
 DECODE_LENS  = [int(x) for x in _parse_list("SWEEP_DECODE_LENS",  [128, 512, 1024, 4096])]  # 답변 길이
-RATES        = _parse_list("SWEEP_RATES", [1.0, 4.0, 8.0])  # 초당 요청 수 (QPS)
+RATES        = _parse_list("SWEEP_RATES", [1.0, 2.0, 4.0])  # 초당 요청 수 (QPS)
 
 WARMUP_N   = int(os.environ.get("SWEEP_WARMUP_N",   "50"))   # 준비운동 요청 수
-MEASURED_N = int(os.environ.get("SWEEP_MEASURED_N", "200"))  # 실전 측정 요청 수
+MEASURED_N = int(os.environ.get("SWEEP_MEASURED_N", "300"))  # 실전 측정 요청 수
 
 # 웜업 단계에서 서버가 감당 못하면 실전을 스킵하는 기준
 ABORT_FAIL_RATE  = float(os.environ.get("SWEEP_ABORT_FAIL_RATE",  "0.30"))  # 에러율 30% 초과 시

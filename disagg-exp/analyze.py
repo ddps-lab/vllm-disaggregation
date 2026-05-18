@@ -33,7 +33,9 @@ COST_PER_HR = {
     "A2": 3.91,  # g4dn.12xlarge OD, TP=4 PP=1
     "A3": 3.91,  # g4dn.12xlarge OD, TP=1 PP=4
     "B":  1.86,  # g6e.xlarge OD
-    "C":  3.91,  # g4dn.12xlarge OD (same-node PD)
+    "C":  3.91,  # g4dn.12xlarge OD (alias for C1)
+    "C1": 3.91,  # g4dn.12xlarge OD, same-node PD, TP=2 PP=1
+    "C2": 3.91,  # g4dn.12xlarge OD, same-node PD, TP=1 PP=2
     "D":  1.61,  # 2× g6.xlarge OD
 }
 
@@ -223,7 +225,7 @@ def plot_comparison(all_stats: dict[str, dict[str, dict]], out_dir: Path) -> Non
 
 def main(args: argparse.Namespace) -> None:
     log_dir = Path(args.log_dir)
-    configs = args.configs or ["A1", "A2", "A3", "B", "C", "D"]
+    configs = args.configs or ["A1", "A2", "A3", "B", "C1", "C2", "D"]
 
     all_stats: dict[str, dict[str, dict]] = {}
     for config in configs:
