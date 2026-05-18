@@ -7,9 +7,13 @@
 #   bash launch_configs.sh configA3           # monolithic 4×T4, TP=1 PP=4
 #   bash launch_configs.sh configA            # alias for configA1
 #   bash launch_configs.sh configB            # monolithic 1×L40S
-#   bash launch_configs.sh configC prefill    # same-node PD, prefill side
-#   bash launch_configs.sh configC decode     # same-node PD, decode side
-#   bash launch_configs.sh configC proxy      # launch disagg proxy (after both)
+#   bash launch_configs.sh configC1 prefill   # same-node PD TP=2 PP=1, prefill side (default C)
+#   bash launch_configs.sh configC1 decode    # same-node PD TP=2 PP=1, decode side
+#   bash launch_configs.sh configC1 proxy     # launch disagg proxy (after both)
+#   bash launch_configs.sh configC2 prefill   # same-node PD TP=1 PP=2, prefill side
+#   bash launch_configs.sh configC2 decode    # same-node PD TP=1 PP=2, decode side
+#   bash launch_configs.sh configC2 proxy     # launch disagg proxy
+#   bash launch_configs.sh configC ...        # alias for configC1
 #   bash launch_configs.sh configD prefill    # cross-node PD, prefill side
 #   bash launch_configs.sh configD decode     # cross-node PD, decode side
 #   bash launch_configs.sh configD proxy      # launch disagg proxy
@@ -140,9 +144,10 @@ configB() {
 #    - 캐싱을 꺼서 디스크 I/O 병목을 막고, 오직 '네트워크 통신(파이프) 속도' 측정에만 집중하기 위함.
 # 3. 청크드 프리필 끄기 (--no-enable-chunked-prefill)
 #    - 한 번에 연산하여 GPU 연산량 한계(Compute Bound)를 뽑아내기 위해 껐음. (추후 켜고 비교 측정 필요)
-configC_prefill() {
-    echo "[launch] configC prefill: TP=2 on GPU 0,1, port 8100"
-    local cfg="$LOG_DIR/lmcache_prefill_C.yaml"
+# C1: TP=2 PP=1 (prefill GPU 0-1, decode GPU 2-3) — 기존 default
+configC1_prefill() {
+    echo "[launch] configC1 prefill: TP=2 PP=1 on GPU 0,1, port 8100"
+    local cfg="$LOG_DIR/lmcache_prefill_C1.yaml"
     cat > "$cfg" <<YAML
 local_cpu: False
 max_local_cpu_size: 0
@@ -162,14 +167,15 @@ YAML
     vllm serve "${COMMON_FLAGS[@]}" \
         --no-enable-chunked-prefill \
         --tensor-parallel-size 2 \
+        --pipeline-parallel-size 1 \
         --kv-transfer-config '{"kv_connector":"InstrumentedLMCacheConnector","kv_connector_module_path":"instrumented_connector","kv_role":"kv_producer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"producerC"}}' \
         --port 8100 \
-        2>&1 | tee "$LOG_DIR/vllm_configC_prefill_$(hostname).log"
+        2>&1 | tee "$LOG_DIR/vllm_configC1_prefill_$(hostname).log"
 }
 
-configC_decode() {
-    echo "[launch] configC decode: TP=2 on GPU 2,3, port 8200"
-    local cfg="$LOG_DIR/lmcache_decode_C.yaml"
+configC1_decode() {
+    echo "[launch] configC1 decode: TP=2 PP=1 on GPU 2,3, port 8200"
+    local cfg="$LOG_DIR/lmcache_decode_C1.yaml"
     cat > "$cfg" <<YAML
 local_cpu: False
 max_local_cpu_size: 0
@@ -188,10 +194,71 @@ YAML
     LMCACHE_CONFIG_FILE="$cfg" \
     vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 2 \
+        --pipeline-parallel-size 1 \
         --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_consumer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"consumerC"}}' \
         --port 8200 \
-        2>&1 | tee "$LOG_DIR/vllm_configC_decode_$(hostname).log"
+        2>&1 | tee "$LOG_DIR/vllm_configC1_decode_$(hostname).log"
 }
+
+# C2: TP=1 PP=2 — 같은 4× T4 하드웨어, 같은 NIXL/shm 경로. TP/PP만 다름.
+configC2_prefill() {
+    echo "[launch] configC2 prefill: TP=1 PP=2 on GPU 0,1, port 8100"
+    local cfg="$LOG_DIR/lmcache_prefill_C2.yaml"
+    cat > "$cfg" <<YAML
+local_cpu: False
+max_local_cpu_size: 0
+max_local_disk_size: 0
+remote_serde: NULL
+enable_nixl: True
+nixl_role: "sender"
+nixl_peer_host: "127.0.0.1"
+nixl_peer_port: 55555
+nixl_buffer_size: 1073741824
+nixl_buffer_device: "cuda"
+nixl_enable_gc: True
+YAML
+    CUDA_VISIBLE_DEVICES=0,1 \
+    UCX_TLS=cuda_copy,shm,tcp \
+    LMCACHE_CONFIG_FILE="$cfg" \
+    vllm serve "${COMMON_FLAGS[@]}" \
+        --no-enable-chunked-prefill \
+        --tensor-parallel-size 1 \
+        --pipeline-parallel-size 2 \
+        --kv-transfer-config '{"kv_connector":"InstrumentedLMCacheConnector","kv_connector_module_path":"instrumented_connector","kv_role":"kv_producer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"producerC"}}' \
+        --port 8100 \
+        2>&1 | tee "$LOG_DIR/vllm_configC2_prefill_$(hostname).log"
+}
+
+configC2_decode() {
+    echo "[launch] configC2 decode: TP=1 PP=2 on GPU 2,3, port 8200"
+    local cfg="$LOG_DIR/lmcache_decode_C2.yaml"
+    cat > "$cfg" <<YAML
+local_cpu: False
+max_local_cpu_size: 0
+max_local_disk_size: 0
+remote_serde: NULL
+enable_nixl: True
+nixl_role: "receiver"
+nixl_peer_host: "127.0.0.1"
+nixl_peer_port: 55555
+nixl_buffer_size: 1073741824
+nixl_buffer_device: "cuda"
+nixl_enable_gc: True
+YAML
+    CUDA_VISIBLE_DEVICES=2,3 \
+    UCX_TLS=cuda_copy,shm,tcp \
+    LMCACHE_CONFIG_FILE="$cfg" \
+    vllm serve "${COMMON_FLAGS[@]}" \
+        --tensor-parallel-size 1 \
+        --pipeline-parallel-size 2 \
+        --kv-transfer-config '{"kv_connector":"LMCacheConnectorV1","kv_role":"kv_consumer","kv_connector_extra_config":{"discard_partial_chunks":false,"lmcache_rpc_port":"consumerC"}}' \
+        --port 8200 \
+        2>&1 | tee "$LOG_DIR/vllm_configC2_decode_$(hostname).log"
+}
+
+# Back-compat aliases: configC → configC1
+configC_prefill() { configC1_prefill; }
+configC_decode()  { configC1_decode; }
 
 # ── Config D — cross-node PD, TCP ─────────────────────────────────────────────
 # Run prefill side on the prefill node, decode side on the decode node.
@@ -277,12 +344,26 @@ case "$CONFIG" in
     configA2) configA2 ;;
     configA3) configA3 ;;
     configB) configB ;;
-    configC)
+    configC)   # alias for configC1
         case "$ROLE" in
-            prefill) configC_prefill ;;
-            decode)  configC_decode ;;
+            prefill) configC1_prefill ;;
+            decode)  configC1_decode ;;
             proxy)   launch_proxy "127.0.0.1" "127.0.0.1" ;;
             *) echo "configC needs role: prefill | decode | proxy"; exit 1 ;;
+        esac ;;
+    configC1)
+        case "$ROLE" in
+            prefill) configC1_prefill ;;
+            decode)  configC1_decode ;;
+            proxy)   launch_proxy "127.0.0.1" "127.0.0.1" ;;
+            *) echo "configC1 needs role: prefill | decode | proxy"; exit 1 ;;
+        esac ;;
+    configC2)
+        case "$ROLE" in
+            prefill) configC2_prefill ;;
+            decode)  configC2_decode ;;
+            proxy)   launch_proxy "127.0.0.1" "127.0.0.1" ;;
+            *) echo "configC2 needs role: prefill | decode | proxy"; exit 1 ;;
         esac ;;
     configD)
         case "$ROLE" in
@@ -296,6 +377,6 @@ case "$CONFIG" in
             *) echo "configD needs role: prefill | decode | proxy"; exit 1 ;;
         esac ;;
     *)
-        echo "Unknown config: $CONFIG. Valid: configA configA1 configA2 configA3 configB configC configD"
+        echo "Unknown config: $CONFIG. Valid: configA configA1 configA2 configA3 configB configC configC1 configC2 configD"
         exit 1 ;;
 esac

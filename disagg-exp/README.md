@@ -5,7 +5,7 @@ vLLM fork (`releases/v0.21.0`) 기반의 prefill/decode disaggregation 비용대
 
 > **핵심 질문**: 같은 예산이면 큰 GPU 한 장이 나은가, 작은 GPU 여러 장 + PD 분리가 나은가?
 >
-> 같은 워크로드를 6가지 토폴로지에 던지고 **TTFT / TPOT / $/M-tokens**로 비교한다.
+> 같은 워크로드를 7가지 토폴로지에 던지고 **TTFT / TPOT / $/M-tokens**로 비교한다.
 
 ---
 
@@ -76,7 +76,7 @@ PD 분리 시 prefill이 만든 KV를 decode에게 전달해야 한다. 이 통�
 
 ---
 
-## 2. 6가지 Config
+## 2. 7가지 Config
 
 | Config | Instance | GPU 구성 | Topology | $/hr OD |
 |---|---|---|---|---:|
@@ -84,12 +84,14 @@ PD 분리 시 prefill이 만든 KV를 decode에게 전달해야 한다. 이 통�
 | **A2** | g4dn.12xlarge | 4× T4 16GB | Monolithic **TP=4 PP=1** | $3.91 |
 | **A3** | g4dn.12xlarge | 4× T4 16GB | Monolithic **TP=1 PP=4** | $3.91 |
 | **B**  | g6e.xlarge | 1× L40S 48GB | Monolithic TP=1 | $1.86 |
-| **C**  | g4dn.12xlarge | 4× T4 16GB | Same-node PD: prefill TP=2 (GPU 0-1) + decode TP=2 (GPU 2-3). NIXL via shm | $3.91 |
+| **C1** | g4dn.12xlarge | 4× T4 16GB | Same-node PD **TP=2 PP=1**: prefill GPU 0-1 + decode GPU 2-3. NIXL via shm | $3.91 |
+| **C2** | g4dn.12xlarge | 4× T4 16GB | Same-node PD **TP=1 PP=2**: prefill GPU 0-1 + decode GPU 2-3. NIXL via shm | $3.91 |
 | **D**  | 2× g6.xlarge | 2× L4 24GB | Cross-node PD: prefill TP=1 + decode TP=1. NIXL via TCP | $1.61 |
 
 ### 비교 의미
 
-- **A1↔A2↔A3**: 동일 하드웨어에서 TP/PP 조합만 다름 → 8B 모델에 최적인 병렬화 전략 탐색.
+- **A1↔A2↔A3**: 동일 하드웨어에서 TP/PP 조합만 다름 → Monolithic의 최적 병렬화 전략 탐색.
+- **C1↔C2**: 동일 하드웨어 + 동일 PD 토폴로지에서 TP/PP만 다름 → PD에서의 최적 병렬화 전략 탐색.
 - **A↔C**: 동일 4× T4. Monolithic vs same-node PD → 순수 소프트웨어 비교.
 - **B↔A**: 큰 GPU 1장 vs 작은 GPU 4장 → 멀티-GPU 통신 오버헤드 평가.
 - **C↔D**: 둘 다 PD. T4+shm vs L4+TCP → $/M-tokens 정규화로 비교.
@@ -139,8 +141,11 @@ PID 파일: `$EXP_LOG_DIR/.pid_{nvidia_dmon,ifstat,dcgm_loop}` → 재실행 시
 | `configA3()` | TP=1 PP=4, 4× T4, port 8000 |
 | `configA()` | configA1의 alias (back-compat) |
 | `configB()` | TP=1, 1× L40S, port 8000 |
-| `configC_prefill()` | TP=2 (GPU 0-1), LMCache sender, port 8100. UCX_TLS=cuda_copy,shm,tcp |
-| `configC_decode()` | TP=2 (GPU 2-3), LMCache receiver, port 8200 |
+| `configC1_prefill()` | TP=2 PP=1 (GPU 0-1), LMCache sender, port 8100. UCX_TLS=cuda_copy,shm,tcp |
+| `configC1_decode()` | TP=2 PP=1 (GPU 2-3), LMCache receiver, port 8200 |
+| `configC2_prefill()` | TP=1 PP=2 (GPU 0-1), LMCache sender, port 8100. UCX_TLS=cuda_copy,shm,tcp |
+| `configC2_decode()` | TP=1 PP=2 (GPU 2-3), LMCache receiver, port 8200 |
+| `configC_prefill/decode()` | configC1의 alias (back-compat) |
 | `configD_prefill()` | TP=1, LMCache sender, peer=`$DECODER_HOST`. UCX_TLS=tcp |
 | `configD_decode()` | TP=1, LMCache receiver, port 8200 |
 | `launch_proxy()` | `disagg_proxy_server.py` 실행 (port 8000, prefill 8100, decode 8200 묶음) |
@@ -151,7 +156,7 @@ LMCache YAML은 `$LOG_DIR/lmcache_{prefill,decode}_{C,D}.yaml`에 런타임 생�
 
 ### 3.3 `instrumented_connector.py` — KV 전송 시간 기록
 
-`LMCacheConnectorV1` 상속. PD prefill role만 사용 (configC/D prefill).
+`LMCacheConnectorV1` 상속. PD prefill role만 사용 (configC1/C2/D prefill).
 
 | 메서드 | 역할 |
 |---|---|
@@ -209,15 +214,15 @@ LMCache YAML은 `$LOG_DIR/lmcache_{prefill,decode}_{C,D}.yaml`에 런타임 생�
 ```python
 PREFILL_LENS = [512, 2048, 8192]
 DECODE_LENS  = [128, 512, 1024, 4096]
-RATES        = [1.0, 4.0, 8.0]
+RATES        = [1.0, 2.0, 4.0]
 
 Cross 1 (prefill × rate, decode=512):  3 × 3 =  9 points
 Cross 2 (decode × rate, prefill=2048): 4 × 3 = 12 points
                   (중복 3 제거) → total = 18 points/config
-warmup=50, measured=200 → 250 req/point
+warmup=50, measured=300 → 350 req/point
 ```
 
-Per config: **4,500 요청**. 6 configs → 약 **27,000 요청**.
+Per config: **6,300 요청**. 7 configs → 약 **44,100 요청** (총 126 points).
 
 Env로 override 가능:
 ```bash
@@ -232,23 +237,26 @@ python sweep.py --config A1 --base-url http://localhost:8000
 
 ```
 $EXP_LOG_DIR/
-├── <config>/                       # A1, A2, A3, B, C, D
+├── <config>/                       # A1, A2, A3, B, C1, C2, D
 │   ├── p512_d512_r1.0.jsonl        sweep per-request data
 │   ├── .done_p512_d512_r1.0        완료 마커 (resume용)
 │   └── .failed_p512_d512_r4.0      overload 또는 예외
-├── kv_transfer.jsonl               C/D prefill만, instrumented_connector
+├── kv_transfer.jsonl               C1/C2/D prefill만, instrumented_connector
 ├── nvidia_smi.csv                  1Hz Power/Util/Memory
 ├── ifstat.csv                      1Hz NIC throughput
 ├── dcgm.log                        2s DCGM 메트릭
 ├── s3_sync.log                     S3Syncer 로그
 ├── clock_baseline_<host>.txt       chrony snapshot
-├── vllm_colocated_A1.log           Config A1 vLLM 서버
-├── vllm_colocated_A2.log           Config A2
-├── vllm_colocated_A3.log           Config A3
-├── vllm_{prefill,decode}.log       Config C/D
-├── pd_proxy.log                    Config C/D proxy
-├── lmcache_{prefill,decode}_{C,D}.yaml  자동 생성
-└── .pid_{nvidia_dmon,ifstat,dcgm_loop,s3_sync}
+├── vllm_configA1_<host>.log               Config A1 vLLM 서버
+├── vllm_configA2_<host>.log               Config A2
+├── vllm_configA3_<host>.log               Config A3
+├── vllm_configB_<host>.log                Config B
+├── vllm_configC1_{prefill,decode}_<host>.log   Config C1
+├── vllm_configC2_{prefill,decode}_<host>.log   Config C2
+├── vllm_configD_{prefill,decode}_<host>.log    Config D
+├── pd_proxy_<host>.log                         C1/C2/D proxy
+├── lmcache_{prefill,decode}_{C1,C2,D}.yaml     자동 생성
+└── .pid_{nvidia_dmon,ifstat,dcgm_loop}
 ```
 
 ---
@@ -389,20 +397,30 @@ bash disagg-exp/launch_configs.sh configB &
 python disagg-exp/sweep.py --config B --base-url http://localhost:8000
 ```
 
-#### Config C — g4dn.12xlarge same-node PD (터미널 3개)
+#### Config C1/C2 — g4dn.12xlarge same-node PD (순차 실행)
+
+같은 g4dn.12xlarge 인스턴스에서 C1 끝나면 C2 실행. 둘 다 터미널 3개 필요 (decode → prefill → proxy).
 
 ```bash
-# 터미널 1: decode 먼저
-bash disagg-exp/launch_configs.sh configC decode
+# ── C1: TP=2 PP=1 ──
+# 터미널 1: decode 먼저 (receiver가 sender 연결을 기다리는 구조)
+bash disagg-exp/launch_configs.sh configC1 decode
 
 # 터미널 2: prefill
-bash disagg-exp/launch_configs.sh configC prefill
+bash disagg-exp/launch_configs.sh configC1 prefill
 
 # 터미널 3: 양쪽 "Application startup complete." 확인 후 proxy
-bash disagg-exp/launch_configs.sh configC proxy
+bash disagg-exp/launch_configs.sh configC1 proxy
 
 # 터미널 4: sweep (proxy 통해 port 8000)
-python disagg-exp/sweep.py --config C --base-url http://localhost:8000
+python disagg-exp/sweep.py --config C1 --base-url http://localhost:8000
+
+# C1 sweep 끝나면 vllm/proxy 모두 kill 후 C2 실행
+# ── C2: TP=1 PP=2 (같은 흐름) ──
+bash disagg-exp/launch_configs.sh configC2 decode
+bash disagg-exp/launch_configs.sh configC2 prefill
+bash disagg-exp/launch_configs.sh configC2 proxy
+python disagg-exp/sweep.py --config C2 --base-url http://localhost:8000
 ```
 
 #### Config D — g6.xlarge × 2대 (같은 AZ 필수)
@@ -441,7 +459,7 @@ python disagg-exp/sweep.py --config A1 --base-url http://localhost:8000
 aws s3 sync s3://hdjung-disaggregation-result/raw/ ./data/
 
 python disagg-exp/analyze.py --log-dir ./data --plot
-# 기본 configs: ["A1","A2","A3","B","C","D"]
+# 기본 configs: ["A1","A2","A3","B","C1","C2","D"]
 # 출력: 표 + ./data/plots/plot_p*_d*.png
 ```
 
@@ -508,12 +526,16 @@ S3 접근 권한은 인스턴스 IAM Role(`hdjung_disaggregation_result`)에서 
 **Config B** (g6e.xlarge)
 - [ ] 동일 flow
 
-**Config C** (g4dn.12xlarge, same-node PD)
+**Config C1** (g4dn.12xlarge, same-node PD, TP=2 PP=1)
 - [ ] decode → prefill → proxy 순으로 기동
 - [ ] `kv_transfer.jsonl`에 `wait_for_save_done` 라인 들어옴
-- [ ] `vllm_prefill.log`에 `connector lmcache_engine type=...` 1회
+- [ ] `vllm_configC1_prefill_<host>.log`에 `connector lmcache_engine type=...` 1회
 - [ ] TP+PD sanity test (작은 sweep 먼저)
 - [ ] full sweep
+
+**Config C2** (g4dn.12xlarge, same-node PD, TP=1 PP=2)
+- [ ] C1 완전히 정지 후 (같은 인스턴스 재사용)
+- [ ] 동일 flow
 
 **Config D** (g6.xlarge × 2, 같은 AZ)
 - [ ] decode 노드 → prefill 노드 → proxy 순서
@@ -530,7 +552,7 @@ S3 접근 권한은 인스턴스 IAM Role(`hdjung_disaggregation_result`)에서 
 
 | 함정 | 대처 |
 |---|---|
-| **TP+PD over NIXL with TP>1** vLLM 0.21에서 작동 보장 불확실 | Config C 첫 요청으로 sanity test. 안 되면 TP=1+TP=1 fallback |
+| **TP+PD over NIXL with TP>1** vLLM 0.21에서 작동 보장 불확실 | Config C1(TP=2) 첫 요청으로 sanity test. 안 되면 C2(TP=1 PP=2)로 fallback (TP=1이면 NIXL이 단순해짐) |
 | **T4 VRAM 빡빡** TP=2 → 8GB/GPU | OOM 시 `MAX_MODEL_LEN=2048` 또는 `GPU_MEM_UTIL=0.80` |
 | **UCX_TLS 잘못 고름** `cuda_ipc`는 `CUDA_VISIBLE_DEVICES` split 시 불가 | same-node = `cuda_copy,shm,tcp`, cross-node = `tcp` |
 | **BOS +1** 서버가 BOS prepend | `prompt_tokens = prefill_len + 1`은 정상. +1 초과 시 analyze.py 경고 |
@@ -546,8 +568,8 @@ S3 접근 권한은 인스턴스 IAM Role(`hdjung_disaggregation_result`)에서 
 
 ## 10. 산출물
 
-- Config 대결 표: 18 points × 6 configs의 TTFT p50/p99 / TPOT p50/p99 / $/M-tokens
+- Config 대결 표: 18 points × 7 configs의 TTFT p50/p99 / TPOT p50/p99 / $/M-tokens (총 126 points)
 - Panel 1: TTFT vs rate (config별 선, prefill_len별 facet)
 - Panel 2: $/M-tokens vs rate (config별 선)
-- Panel 3: KV 전송 시간 (C vs D, `kv_transfer.jsonl` 기반)
+- Panel 3: KV 전송 시간 (C1 vs C2 vs D, `kv_transfer.jsonl` 기반)
 - 결론: "같은 예산이면 어떤 구성이 언제 유리한가" 한 줄 결론
