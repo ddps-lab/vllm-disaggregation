@@ -23,6 +23,7 @@
 #   DECODER_HOST          for D decode role — the private IP of the decode node
 #   MAX_MODEL_LEN         default: 4096
 #   GPU_MEM_UTIL          default: 0.85
+#   MAX_NUM_SEQS          default: 512   (vLLM stock default is 128; raised for this experiment)
 #   EXP_LOG_DIR           default: ./results
 #   PYTHONHASHSEED        default: 123  (must match on prefill+decode)
 
@@ -62,6 +63,7 @@ COMMON_FLAGS=(
     --gpu-memory-utilization "$GPU_MEM_UTIL"
     --no-enable-prefix-caching
     --dtype bfloat16
+    --max-num-seqs "${MAX_NUM_SEQS:-512}"
 )
 # PD connectors need the instrumented connector on PYTHONPATH
 # : LMCache의 고성능 네트워크 백엔드인 NIXL 기능을 켜기 위한 필수 환경변수입니다.
