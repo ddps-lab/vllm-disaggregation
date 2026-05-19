@@ -255,9 +255,12 @@ class S3Syncer:
         self.bucket = bucket
         self.log_dir = log_dir
         self.interval = interval
-        # S3 저장 경로: s3://버킷/raw/configD/20260518_054200/
-        date_time = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        self.dest = f"s3://{bucket}/raw/{config}/{date_time}/"
+        # S3 저장 경로: s3://버킷/raw/custom/20260518/hostname/configA1/
+        # "custom" prefix → sweep_official.py(공식 벤치) 결과와 구분.
+        # config 한 단계 더 → 같은 호스트에서 여러 config 결과 보관해도 안 섞임.
+        date = _dt.datetime.utcnow().strftime("%Y%m%d")
+        host = socket.gethostname()
+        self.dest = f"s3://{bucket}/raw/custom/{date}/{host}/{config}/"
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._final_done = False
