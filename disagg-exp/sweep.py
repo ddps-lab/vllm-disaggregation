@@ -373,11 +373,17 @@ async def main(args: argparse.Namespace) -> None:
     meta_path = out_dir / "metadata.json"
     if not meta_path.exists():
         # launch_configs.sh 실제 설정에 맞춘 매핑
-        tp_map = {"A1": 2, "A2": 4, "A3": 1, "B": 1, "C": 2, "D": 1}
-        pp_map = {"A1": 2, "A2": 1, "A3": 4, "B": 1, "C": 1, "D": 1}
+        # C/C1/C2: same-node PD over shm,  D: cross-node PD over TCP
+        tp_map = {"A1": 2, "A2": 4, "A3": 1, "B": 1, "C": 2, "C1": 2, "C2": 1, "D": 1}
+        pp_map = {"A1": 2, "A2": 1, "A3": 4, "B": 1, "C": 1, "C1": 1, "C2": 2, "D": 1}
         tp_size = tp_map.get(config, 1)
         pp_size = pp_map.get(config, 1)
-        network = "shm" if config == "C" else ("TCP" if config == "D" else "None")
+        if config in ("C", "C1", "C2"):
+            network = "shm"
+        elif config == "D":
+            network = "TCP"
+        else:
+            network = "None"
         meta = {
             "config": config,
             "tp_size": tp_size,

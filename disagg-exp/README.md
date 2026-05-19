@@ -375,7 +375,7 @@ export MODEL=~/models/llama-3.1-8b   # 또는 HF ID
 
 # ── A1: TP=2 PP=2 ──
 bash disagg-exp/launch_configs.sh configA1 &
-# "Application startup complete." 기다린 후 (tail -f $EXP_LOG_DIR/vllm_colocated_A1.log)
+# "Application startup complete." 기다린 후 (tail -f $EXP_LOG_DIR/vllm_configA1_$(hostname).log)
 python disagg-exp/sweep.py --config A1 --base-url http://localhost:8000
 kill %1; sleep 5
 
