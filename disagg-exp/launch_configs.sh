@@ -23,6 +23,7 @@
 #   DECODER_HOST          for D decode role — the private IP of the decode node
 #   MAX_MODEL_LEN         default: 4096
 #   GPU_MEM_UTIL          default: 0.85
+#   MAX_NUM_SEQS          default: 512   (vLLM stock default is 128; raised for this experiment)
 #   EXP_LOG_DIR           default: ./results
 #   PYTHONHASHSEED        default: 123  (must match on prefill+decode)
 
@@ -62,6 +63,7 @@ COMMON_FLAGS=(
     --gpu-memory-utilization "$GPU_MEM_UTIL"
     --no-enable-prefix-caching
     --dtype bfloat16
+    --max-num-seqs "${MAX_NUM_SEQS:-512}"
 )
 # PD connectors need the instrumented connector on PYTHONPATH
 # : LMCache의 고성능 네트워크 백엔드인 NIXL 기능을 켜기 위한 필수 환경변수입니다.
@@ -118,7 +120,9 @@ configB() {
 # UCX_TLS: cuda_ipc doesn't work when CUDA_VISIBLE_DEVICES splits the bus;
 # use shm (host pinned shared mem) + cuda_copy as the fast path.
 
-# LM cache 라이브러리가 설정파일 yaml을 자동으로 읽어서 실행하는데, 그떄 yaml파일을 여기서 만들어주고 환경변수 -> LMCACHE_CONFIG_FILE="$cfg" 로 넘겨줌 만드는것들은 아래와같음
+# --kv-transfer-config '{"kv_connector":"InstrumentedLMCacheConnector", ...}' 로 설정하면 KV캐시 전송 라이브러리를 InstrumentedLMCacheConnector 을 동적으로 import해서 쓰도록 vllm 내부 factory.py가 get_connector_class가 init하는데, InstrumentedLMCacheConnector 내부적으로 LM cache를 사용
+# 그럼 이제 그 LM cache 라이브러리가 설정파일 yaml을 자동으로 읽어서 실행하는데, 그떄 yaml파일을 여기서 만들어주고 환경변수 -> LMCACHE_CONFIG_FILE="$cfg" 로 넘겨줌 
+# 만드는것들은 아래와같음
 # vllm-disagg/disagg-exp/launch_configs.sh
 # local_cpu: False → CPU 사용 안함
 # max_local_cpu_size: 0
