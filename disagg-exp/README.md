@@ -39,8 +39,8 @@ PD 분리 시 prefill이 만든 KV를 decode에게 전달해야 한다. 이 통�
 
 각 sweep point는 두 단계:
 
-1. **warmup** (50 요청): 시스템 warm-up + overload 판정용. `fail_rate > 0.3` 또는 `ttft_p99 > 30s`면 measured phase **skip**, `.failed_*` 마커 작성.
-2. **measured** (200 요청): 본 측정. JSONL에 모두 기록.
+1. **warmup** (50 요청): 시스템 warm-up + overload 판정용. `fail_rate > 0.3` 또는 `ttft_p99 > 180s`면 measured phase **skip**, `.failed_*` 마커 작성.
+2. **measured** (300 요청): 본 측정. JSONL에 모두 기록.
 
 이게 없으면 overload된 point가 통계를 오염시킨다.
 
@@ -64,7 +64,7 @@ PD 분리 시 prefill이 만든 KV를 decode에게 전달해야 한다. 이 통�
 
 3. **JIT 컴파일 딜레이 격리 (2-Phase Warm-up)**
    - **이유**: PyTorch/CUDA 프로그램 특성상 처음 1~10개의 요청은 메모리 할당 및 커널 JIT 컴파일 때문에 비정상적으로 느립니다. (수십 초 소요)
-   - **효과**: `sweep.py`는 실제 측정(Measured phase) 전에 50개의 가짜 트래픽(Warm-up phase)을 먼저 쏴서 파이프라인을 완전히 데우고(Warming), 그 이후의 200개 데이터만 통계에 반영합니다.
+   - **효과**: `sweep.py`는 실제 측정(Measured phase) 전에 50개의 가짜 트래픽(Warm-up phase)을 먼저 쏴서 파이프라인을 완전히 데우고(Warming), 그 이후의 300개 데이터만 통계에 반영합니다.
 
 4. **로깅 I/O 병목 방지 (TP Rank 0 Filtering)**
    - **이유**: Tensor Parallel(TP=2, 4) 환경에서는 GPU마다 똑같은 워커 프로세스가 뜹니다. 모든 워커가 동시에 `.jsonl` 로그 파일에 접근해 기록하려고 하면 하드디스크 I/O 경합이 발생하여 KV 전송 시간(duration_ms)이 인위적으로 늘어납니다.
@@ -73,6 +73,10 @@ PD 분리 시 prefill이 만든 KV를 decode에게 전달해야 한다. 이 통�
 5. **좀비 프로세스 청소 (`setup.sh`의 `_kill_pid_file`)**
    - **이유**: 이전 실험에서 죽지 않고 백그라운드에 남아있는 vLLM이나 모니터링 툴(DCGM)이 다음 실험의 GPU 메모리/대역폭을 몰래 갉아먹는 것을 막습니다.
    - **효과**: 실험을 재시작할 때마다(Idempotent) 이전 상태를 완전히 초기화(Clean State)하여 독립된 실험 환경을 보장합니다.
+
+6. **Dtype 명시적 통일 (`--dtype half` for all configs)**
+   - **이유**: T4 (CC 7.5) → float16 native, L40S/L4 (CC ≥ 8.0) → bfloat16 native. 섞어 쓰면 dtype 정밀도 차이가 throughput/latency에 반영되어 configs 간 비교가 왜곡됩니다.
+   - **효과**: 모든 config에서 `--dtype half` (float16)으로 명시적 통일하여, 순수 토폴로지 및 병렬화 전략의 효과만을 측정합니다.
 
 ---
 
@@ -118,17 +122,21 @@ disagg-exp/
 | 단계 | 내용 |
 |---|---|
 | 1. `uv` 설치 | Astral의 빠른 Python 패키지 매니저 |
+| 1b. `python3.12-dev` | JIT 컴파일 헤더 (FlashInfer, nvcc) |
 | 2. `.venv` 생성 | Python 3.12 가상환경 (`$REPO/.venv`) |
+| 2b. CUDA 번들 경로 감지 | PyTorch 2.11+ site-packages의 CUDA 찾아서 `CUDA_HOME` + `lib64` 심링크 |
 | 3. vLLM editable install | `VLLM_USE_PRECOMPILED=1 uv pip install -e .` |
 | 4. LMCache ≥ 0.3.9 | 버전 체크 후 필요시 설치 |
 | 5. Python 의존성 | httpx, fastapi, aiohttp, huggingface_hub, … |
-| 5b. 시스템 도구 | `ifstat`, `s5cmd` (apt/wget) |
+| 5b. 시스템 도구 | `ifstat`, `s5cmd v2.2.2` (apt/wget) |
 | 6. chrony | `chronyc tracking` 스냅샷 저장 |
 | 7. DCGM exporter | Prometheus endpoint `:9400` 기동 (DLAMI에 이미 설치돼있다고 가정) |
 | 8. Metric collector 3종 | `nvidia-smi dmon` (1Hz), `ifstat` (1Hz), DCGM scrape loop (2s). 각각 PID 파일로 관리 |
 | 9. 검증 | `import vllm, lmcache` 버전 출력 |
 
 PID 파일: `$EXP_LOG_DIR/.pid_{nvidia_dmon,ifstat,dcgm_loop}` → 재실행 시 안전하게 kill 후 재시작.
+
+**CUDA 번들 경로**: DLAMI 상의 PyTorch 2.11+는 `/opt/pytorch/lib/python3.13/site-packages/nvidia/cu13/` 아래 CUDA를 번들합니다. setup.sh는 이를 자동 감지하고 `lib→lib64` 심링크를 생성하여 FlashInfer 및 NVIDIA 드라이버 도구가 찾을 수 있게 합니다. 모든 config은 명시적으로 `--dtype half` (float16)을 사용하여 cross-config 비교 공정성을 보장합니다.
 
 ### 3.2 `launch_configs.sh` — `vllm serve` 디스패처
 
@@ -150,9 +158,13 @@ PID 파일: `$EXP_LOG_DIR/.pid_{nvidia_dmon,ifstat,dcgm_loop}` → 재실행 시
 | `configD_decode()` | TP=1, LMCache receiver, port 8200 |
 | `launch_proxy()` | `disagg_proxy_server.py` 실행 (port 8000, prefill 8100, decode 8200 묶음) |
 
-공통 flag (`COMMON_FLAGS`): `--no-enable-prefix-caching --dtype bfloat16 --served-model-name llama-3.1-8b`. CUDA Graph **ON** (enforce-eager 안 씀).
+**Dtype 명시적 통일**: 모든 config에서 `--dtype half` (float16)으로 명시. T4 (CC 7.5) native, L40S/L4 (CC ≥ 8.0) downgrade from bfloat16. dtype 혼재 시 정밀도 차이가 throughput/latency에 섞여 cross-config 비교 왜곡. 순수 토폴로지 효과 측정.
 
-LMCache YAML은 `$LOG_DIR/lmcache_{prefill,decode}_{C,D}.yaml`에 런타임 생성. peer 주소(127.0.0.1 / `$DECODER_HOST`)도 자동 주입.
+**청크드 프리필 비활성화 (PD configs)**: Config C1/C2/D의 prefill 역할에만 `--no-enable-chunked-prefill`을 적용. 전체 입력을 한 번의 Forward Pass에서 처리하여 GPU 연산량 한계(compute bound)를 정확하게 측정하기 위함. 이 설정은 추후 켜고 끄며 성능 비교 측정이 필요. 키려면 이 플래그를 제거하면 됨.
+
+공통 flag (`COMMON_FLAGS`): `--no-enable-prefix-caching --dtype half --max-model-len 4096 --served-model-name llama-3.1-8b`. **`--max-model-len=4096`**: T4 VRAM 제약. prefill+decode 합이 4096을 초과하면 OOM. 워크로드 그리드에서 PREFILL_LENS=[512,2048], DECODE_LENS=[128,512,1024]로 제한. CUDA Graph **ON** (enforce-eager 안 씀).
+
+LMCache YAML은 `$LOG_DIR/lmcache_{prefill,decode}_{C1,C2,D}.yaml`에 런타임 생성. peer 주소(127.0.0.1 / `$DECODER_HOST`)도 자동 주입.
 
 ### 3.3 `instrumented_connector.py` — KV 전송 시간 기록
 
@@ -212,17 +224,20 @@ LMCache YAML은 `$LOG_DIR/lmcache_{prefill,decode}_{C,D}.yaml`에 런타임 생�
 ## 4. 워크로드 그리드
 
 ```python
-PREFILL_LENS = [512, 2048, 8192]
-DECODE_LENS  = [128, 512, 1024, 4096]
+PREFILL_LENS = [512, 2048]              # max-model-len=4096 제약으로 8192 제거
+DECODE_LENS  = [128, 512, 1024]         # max-model-len=4096 제약으로 4096 제거
 RATES        = [1.0, 2.0, 4.0]
 
-Cross 1 (prefill × rate, decode=512):  3 × 3 =  9 points
-Cross 2 (decode × rate, prefill=2048): 4 × 3 = 12 points
-                  (중복 3 제거) → total = 18 points/config
+Cross 1 (prefill × rate, decode=512):  2 × 3 =  6 points
+Cross 2 (decode × rate, prefill=2048): 3 × 3 =  9 points
+                  (중복 1 제거) → total = 14 points/config
 warmup=50, measured=300 → 350 req/point
 ```
 
-Per config: **6,300 요청**. 7 configs → 약 **44,100 요청** (총 126 points).
+**max-model-len 제약**: T4 (16GB) VRAM 한계에서 prefill+decode 조합이 4096 토큰을 초과하면 OOM 발생. 따라서 최대 조합은 2048 + 1024 = 3072 (안전마진).
+
+Per config: **4,900 요청**. 7 configs → 약 **34,300 요청** (총 98 points). 
+measured=300 유지로 p99 신뢰도 보장 + 측정 시간 단축.
 
 Env로 override 가능:
 ```bash

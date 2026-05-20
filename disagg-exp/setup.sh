@@ -16,11 +16,44 @@ if ! command -v uv &>/dev/null; then
     source "$HOME/.local/bin/env" 2>/dev/null || export PATH="$HOME/.cargo/bin:$PATH"
 fi
 
+# ── 1b. python3.12-dev (for JIT compilation in FlashInfer) ──────────────────
+if ! dpkg -l | grep -q python3.12-dev; then
+    echo "[setup] installing python3.12-dev ..."
+    sudo apt-get install -y -q python3.12-dev 2>/dev/null || echo "[setup] WARN: apt install python3.12-dev failed (non-root?)"
+fi
+
 # ── 2. venv ───────────────────────────────────────────────────────────────────
 if [[ ! -f "$VENV/bin/python" ]]; then
     uv venv "$VENV" --python 3.12
 fi
 source "$VENV/bin/activate"
+
+# ── 2b. CUDA bundled path for DLAMI ────────────────────────────────────────────
+# PyTorch 2.11+ on DLAMI bundles CUDA under site-packages/nvidia/
+# FlashInfer JIT requires CUDA_HOME and PATH setup for clang/nvcc compilation.
+BUNDLED_CUDA=$(python -c "
+import sysconfig
+import pathlib
+site_packages = pathlib.Path(sysconfig.get_paths()['purelib'])
+cuda_path = site_packages / 'nvidia' / 'cu13'
+if cuda_path.exists():
+    print(cuda_path)
+" 2>/dev/null || echo "")
+
+if [[ -n "$BUNDLED_CUDA" ]]; then
+    echo "[setup] detected bundled CUDA at $BUNDLED_CUDA"
+    # Create lib→lib64 symlink if missing (vLLM/CUDA expects lib64)
+    if [[ -d "$BUNDLED_CUDA/lib" ]] && [[ ! -d "$BUNDLED_CUDA/lib64" ]]; then
+        ln -s lib "$BUNDLED_CUDA/lib64"
+        echo "[setup] created lib64→lib symlink"
+    fi
+    export CUDA_HOME="$BUNDLED_CUDA"
+    export PATH="$BUNDLED_CUDA/bin:$PATH"
+    export LD_LIBRARY_PATH="$BUNDLED_CUDA/lib:${LD_LIBRARY_PATH:-}"
+    echo "[setup] CUDA env: CUDA_HOME=$CUDA_HOME"
+else
+    echo "[setup] no bundled CUDA found (expected on DLAMI with PyTorch 2.11+)"
+fi
 
 # ── 3. vLLM fork (editable) ──────────────────────────────────────────────────
 if ! python -c "import vllm" &>/dev/null; then

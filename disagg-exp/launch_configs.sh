@@ -53,6 +53,13 @@ if [[ -z "$CONFIG" ]]; then
     exit 1
 fi
 
+# ── dtype: explicit float16 for cross-config comparison ──────────────────────
+# All configs use float16 (half) for fair comparison.
+# T4 (CC 7.5) native, L40S/L4 (CC 8.9+) downgrade from bfloat16.
+# Mixing dtype across configs would confound dtype effect with throughput/latency.
+DTYPE="half"
+echo "[launch] using --dtype half (float16) for all configs"
+
 # ── common flags ──────────────────────────────────────────────────────────────
 # Bash의 배열(Array) 문법입니다. 파이썬의 list와 같습니다.
 #--no-enable-prefix-caching: KV 캐시 재사용 기능을 끕니다. 이 실험은 'Prefill에서 Decode로 KV 캐시를 넘기는 것'이 메인인데, 로컬 캐시가 켜져 있으면 데이터가 오염될 수 있기 때문에
@@ -62,7 +69,7 @@ COMMON_FLAGS=(
     --max-model-len "$MAX_MODEL_LEN"
     --gpu-memory-utilization "$GPU_MEM_UTIL"
     --no-enable-prefix-caching
-    --dtype bfloat16
+    --dtype "$DTYPE"
     --max-num-seqs "${MAX_NUM_SEQS:-512}"
 )
 # PD connectors need the instrumented connector on PYTHONPATH
