@@ -158,8 +158,8 @@ configC1_prefill() {
     echo "[launch] configC1 prefill: TP=2 PP=1 on GPU 0,1, port 8100"
     local cfg="$LOG_DIR/lmcache_prefill_C1.yaml"
     cat > "$cfg" <<YAML
-local_cpu: False
-max_local_cpu_size: 0
+local_cpu: True
+max_local_cpu_size: 0.001
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -186,8 +186,8 @@ configC1_decode() {
     echo "[launch] configC1 decode: TP=2 PP=1 on GPU 2,3, port 8200"
     local cfg="$LOG_DIR/lmcache_decode_C1.yaml"
     cat > "$cfg" <<YAML
-local_cpu: False
-max_local_cpu_size: 0
+local_cpu: True
+max_local_cpu_size: 0.001
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -214,8 +214,8 @@ configC2_prefill() {
     echo "[launch] configC2 prefill: TP=1 PP=2 on GPU 0,1, port 8100"
     local cfg="$LOG_DIR/lmcache_prefill_C2.yaml"
     cat > "$cfg" <<YAML
-local_cpu: False
-max_local_cpu_size: 0
+local_cpu: True
+max_local_cpu_size: 0.001
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -242,8 +242,8 @@ configC2_decode() {
     echo "[launch] configC2 decode: TP=1 PP=2 on GPU 2,3, port 8200"
     local cfg="$LOG_DIR/lmcache_decode_C2.yaml"
     cat > "$cfg" <<YAML
-local_cpu: False
-max_local_cpu_size: 0
+local_cpu: True
+max_local_cpu_size: 0.001
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -281,15 +281,15 @@ configD_prefill() {
     echo "[launch] configD prefill: TP=1, peer=$decoder_host:55555, port 8100"
     local cfg="$LOG_DIR/lmcache_prefill_D.yaml"
     cat > "$cfg" <<YAML
-local_cpu: False
-max_local_cpu_size: 0
+local_cpu: True
+max_local_cpu_size: 1
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
 nixl_role: "sender"
 nixl_peer_host: "$decoder_host"
 nixl_peer_port: 55555
-nixl_buffer_size: 1073741824
+nixl_buffer_size: 268435456
 nixl_buffer_device: "cuda"
 nixl_enable_gc: True
 YAML
@@ -309,15 +309,15 @@ configD_decode() {
     local cfg="$LOG_DIR/lmcache_decode_D.yaml"
     # The decode node writes its own config; peer_host is not used by receiver.
     cat > "$cfg" <<YAML
-local_cpu: False
-max_local_cpu_size: 0
+local_cpu: True
+max_local_cpu_size: 1
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
 nixl_role: "receiver"
 nixl_peer_host: "127.0.0.1"
 nixl_peer_port: 55555
-nixl_buffer_size: 1073741824
+nixl_buffer_size: 268435456
 nixl_buffer_device: "cuda"
 nixl_enable_gc: True
 YAML
