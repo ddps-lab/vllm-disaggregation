@@ -58,7 +58,7 @@ MEASURED_N = int(os.environ.get("SWEEP_MEASURED_N", "300"))  # 실전 측정 요
 
 # 웜업 단계에서 서버가 감당 못하면 실전을 스킵하는 기준
 ABORT_FAIL_RATE  = float(os.environ.get("SWEEP_ABORT_FAIL_RATE",  "0.30"))  # 에러율 30% 초과 시
-ABORT_TTFT_P99_S = float(os.environ.get("SWEEP_ABORT_TTFT_P99_S", "180.0"))  # TTFT p99가 3분 초과 시
+ABORT_TTFT_P99_S = float(os.environ.get("SWEEP_ABORT_TTFT_P99_S", "300.0"))  # TTFT p99가 5분 초과 시
 
 LOG_DIR = os.environ.get("EXP_LOG_DIR", "./results")  # 모든 결과 파일의 저장 경로
 
