@@ -8,7 +8,7 @@ Usage:
 Env overrides for the grid:
     SWEEP_PREFILL_LENS=512,2048,8192
     SWEEP_DECODE_LENS=128,512,1024,4096
-    SWEEP_RATES=1.0,2.0,4.0
+    SWEEP_RATES=0.5,1.0,2.0
 
 S3 sync (embedded — runs as a background thread while sweep is active):
     S3_BUCKET=hdjung-disaggregation-result   # default if --s3-bucket omitted
@@ -51,9 +51,9 @@ def _parse_list(env_key: str, default: list[float]) -> list[float]:
 
 PREFILL_LENS = [int(x) for x in _parse_list("SWEEP_PREFILL_LENS", [512, 2048])]  # 질문 길이 (토큰 수). max 2048 (max-model-len=4096 제약)
 DECODE_LENS  = [int(x) for x in _parse_list("SWEEP_DECODE_LENS",  [128, 512, 1024])]  # 답변 길이. max 1024 (prefill+decode ≤ 4096)
-RATES        = _parse_list("SWEEP_RATES", [1.0, 2.0, 4.0])  # 초당 요청 수 (QPS)
+RATES        = _parse_list("SWEEP_RATES", [0.5, 1.0, 2.0])  # 초당 요청 수 (QPS)
 
-WARMUP_N   = int(os.environ.get("SWEEP_WARMUP_N",   "50"))   # 준비운동 요청 수
+WARMUP_N   = int(os.environ.get("SWEEP_WARMUP_N",   "10"))   # 준비운동 요청 수
 MEASURED_N = int(os.environ.get("SWEEP_MEASURED_N", "300"))  # 실전 측정 요청 수
 
 # 웜업 단계에서 서버가 감당 못하면 실전을 스킵하는 기준
@@ -105,7 +105,6 @@ async def _do_request(
         "model": MODEL_NAME,
         "prompt": prompt_ids,        # 토큰 ID 리스트로 직접 전달 (문자열 아님)
         "max_tokens": decode_len,    # 최대 생성 길이
-        "min_tokens": decode_len,    # 최소 생성 길이 (max=min → 정확히 고정)
         "temperature": 0,            # 결정론적 생성 (재현성)
         "top_p": 1.0,
         "ignore_eos": True,          # EOS 토큰이 나와도 멈추지 않고 끝까지 생성
@@ -412,19 +411,12 @@ async def main(args: argparse.Namespace) -> None:
     await wait_for_health(base_url)
 
     # ── Grid 조건표 생성 ──
-    # cross1: 질문길이(3) × QPS(3), 답변=512 고정 → 9개
-    # cross2: 답변길이(4) × QPS(3), 질문=2048 고정 → 12개 (중복 제거)
-    # 합계: 약 18~21개 조건
+    # 모든 가능한 조합 (Prefill × Decode × Rate) 생성
     points: list[tuple[int, int, float]] = []
-    fixed_decode = 512
-    fixed_prefill = 2048
     for pl in PREFILL_LENS:
-        for r in RATES:
-            points.append((pl, fixed_decode, r))
-    for dl in DECODE_LENS:
-        for r in RATES:
-            if (fixed_prefill, dl, r) not in points:
-                points.append((fixed_prefill, dl, r))
+        for dl in DECODE_LENS:
+            for r in RATES:
+                points.append((pl, dl, r))
 
     print(f"Grid: {len(points)} points × (warmup={WARMUP_N} + measured={MEASURED_N})", flush=True)
 
