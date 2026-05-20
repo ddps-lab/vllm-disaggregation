@@ -63,6 +63,8 @@ echo "[launch] using --dtype half (float16) for all configs"
 # ── common flags ──────────────────────────────────────────────────────────────
 # Bash의 배열(Array) 문법입니다. 파이썬의 list와 같습니다.
 #--no-enable-prefix-caching: KV 캐시 재사용 기능을 끕니다. 이 실험은 'Prefill에서 Decode로 KV 캐시를 넘기는 것'이 메인인데, 로컬 캐시가 켜져 있으면 데이터가 오염될 수 있기 때문에
+# --model "$MODEL": vLLM 서버가 모델 가중치(weights)를 가져올 실제 위치
+# --served-model-name llama-3.1-8b: 클라이언트가 API를 호출할 때 사용할 API 노출용 이름
 COMMON_FLAGS=(
     --model "$MODEL"
     --served-model-name llama-3.1-8b
@@ -129,20 +131,20 @@ configB() {
 
 # LM cache 라이브러리가 설정파일 yaml을 자동으로 읽어서 실행하는데, 그떄 yaml파일을 여기서 만들어주고 환경변수 -> LMCACHE_CONFIG_FILE="$cfg" 로 넘겨줌 만드는것들은 아래와같음
 # vllm-disagg/disagg-exp/launch_configs.sh
-# local_cpu: False → CPU 사용 안함
-# max_local_cpu_size: 0
+# local_cpu: True → CPU 사용 
+# max_local_cpu_size: 0.001
 # max_local_disk_size: 0
 # remote_serde: NULL → 직렬화 사용 안함
 # enable_nixl: True → NIXL 사용
 # nixl_role: "sender" 또는 "receiver" → sender는 prefill, receiver는 decode
-# nixl_peer_host: "127.0.0.1" → 같은 노드이므로 localhost
+# nixl_peer_host: "127.0.0.1" → 같은 노드이므로 localhost, config d에선 달라져야함
 # nixl_peer_port: 55555 → 통신 포트
 # nixl_buffer_size: 1073741824 → 버퍼 크기 1GB
 # nixl_buffer_device: "cuda" → CUDA 버퍼 사용
 # nixl_enable_gc: True → 가비지 컬렉션 활성화
 
 # [여기부터 핵심 요약]
-# 1. 통신 최적화 (NIXL + UCX_TLS=cuda_copy,shm,tcp)
+# 1. 통신 최적화 (NIXL + UCX_TLS=(cuda_copy,shm,tcp)
 #    - AWS 환경에서는 보안상 GPU 간 직통 통신(cuda_ipc)이 차단됨.
 #    - 따라서 NIXL(고속 통신망)을 켜고, cuda_copy(GPU DMA 하드웨어 복사기)를 사용하여
 #    - 메인보드의 공유 메모리(shm)를 거쳐 통신하는 것이 AWS에서 구현 가능한 가장 빠른 방법임.
@@ -154,12 +156,13 @@ configB() {
 # 3. 청크드 프리필 끄기 (--no-enable-chunked-prefill)
 #    - 한 번에 연산하여 GPU 연산량 한계(Compute Bound)를 뽑아내기 위해 껐음. (추후 켜고 비교 측정 필요)
 # C1: TP=2 PP=1 (prefill GPU 0-1, decode GPU 2-3) — 기존 default
+# discard_partial_chunks":false -> prefill의 마지막 청크는 kv캐시가 다 안찼을텐데 true로 하면 이걸 버려버림 그럼 decode에서 재계산 해야하니 false로 설정
 configC1_prefill() {
     echo "[launch] configC1 prefill: TP=2 PP=1 on GPU 0,1, port 8100"
     local cfg="$LOG_DIR/lmcache_prefill_C1.yaml"
     cat > "$cfg" <<YAML
 local_cpu: True
-max_local_cpu_size: 0.001
+max_local_cpu_size: 3.0
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -187,7 +190,7 @@ configC1_decode() {
     local cfg="$LOG_DIR/lmcache_decode_C1.yaml"
     cat > "$cfg" <<YAML
 local_cpu: True
-max_local_cpu_size: 0.001
+max_local_cpu_size: 3.0
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -215,7 +218,7 @@ configC2_prefill() {
     local cfg="$LOG_DIR/lmcache_prefill_C2.yaml"
     cat > "$cfg" <<YAML
 local_cpu: True
-max_local_cpu_size: 0.001
+max_local_cpu_size: 3.0
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -243,7 +246,7 @@ configC2_decode() {
     local cfg="$LOG_DIR/lmcache_decode_C2.yaml"
     cat > "$cfg" <<YAML
 local_cpu: True
-max_local_cpu_size: 0.001
+max_local_cpu_size: 3.0
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -282,7 +285,7 @@ configD_prefill() {
     local cfg="$LOG_DIR/lmcache_prefill_D.yaml"
     cat > "$cfg" <<YAML
 local_cpu: True
-max_local_cpu_size: 1
+max_local_cpu_size: 3.0
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -315,7 +318,7 @@ configD_decode() {
     # The decode node writes its own config; peer_host points to the prefill node.
     cat > "$cfg" <<YAML
 local_cpu: True
-max_local_cpu_size: 1
+max_local_cpu_size: 3.0
 max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
@@ -337,6 +340,10 @@ YAML
 }
 
 # ── proxy launcher (shared by C and D) ───────────────────────────────────────
+# host 0.0.0.0 설정 하면 개방 ip 되서 모든 ip에서 이 api에 접근가능
+# PROXY_SCRIPT="$REPO_ROOT/examples/disaggregated/lmcache/disagg_prefill_lmcache_v1/disagg_proxy_server.py" 에서 이 요청을 프록시 하는데 다음과같음
+# disagg_proxy_server.py/send_request_to_service() 함수가
+# stream_service_response() 함수는
 launch_proxy() {
     local prefill_host="${1:-127.0.0.1}"
     local decode_host="${2:-127.0.0.1}"
