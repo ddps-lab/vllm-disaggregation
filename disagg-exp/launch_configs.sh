@@ -305,9 +305,14 @@ YAML
 }
 
 configD_decode() {
-    echo "[launch] configD decode: TP=1, port 8200"
+    local prefill_host="${PREFILL_HOST:-PREFILL_HOST_NOT_SET}"
+    if [[ "$prefill_host" == "PREFILL_HOST_NOT_SET" ]]; then
+        echo "ERROR: Set PREFILL_HOST=<prefill-node-private-ip> before running configD decode"
+        exit 1
+    fi
+    echo "[launch] configD decode: TP=1, peer=$prefill_host:55555, port 8200"
     local cfg="$LOG_DIR/lmcache_decode_D.yaml"
-    # The decode node writes its own config; peer_host is not used by receiver.
+    # The decode node writes its own config; peer_host points to the prefill node.
     cat > "$cfg" <<YAML
 local_cpu: True
 max_local_cpu_size: 1
@@ -315,7 +320,7 @@ max_local_disk_size: 0
 remote_serde: NULL
 enable_nixl: True
 nixl_role: "receiver"
-nixl_peer_host: "127.0.0.1"
+nixl_peer_host: "$prefill_host"
 nixl_peer_port: 55555
 nixl_buffer_size: 268435456
 nixl_buffer_device: "cuda"
