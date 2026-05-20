@@ -59,9 +59,11 @@ MODEL_NAME = "llama-3.1-8b"  # must match --served-model-name on the server
 
 
 # ── S3 sync (best-effort, optional) ──────────────────────────────────────────
-def start_s3_sync(bucket: str, interval: int = 30) -> threading.Event | None:
-    """Background sync of LOG_DIR → s3://{bucket}/raw/{date}/{hostname}/.
+def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Event | None:
+    """Background sync of LOG_DIR → s3://{bucket}/raw/official/{date}/{host}/{config}/.
 
+    "official" prefix → sweep.py(custom) 결과와 구분.
+    config 한 단계 더 → 같은 호스트에서 여러 config 결과 보관해도 안 섞임.
     Returns the stop Event, or None if s5cmd is missing or bucket is empty.
     """
     if not bucket:
@@ -73,7 +75,7 @@ def start_s3_sync(bucket: str, interval: int = 30) -> threading.Event | None:
 
     host = socket.gethostname()
     date = _dt.datetime.utcnow().strftime("%Y%m%d")
-    dest = f"s3://{bucket}/raw/{date}/{host}/"
+    dest = f"s3://{bucket}/raw/official/{date}/{host}/{config}/"
     stop = threading.Event()
 
     def _loop() -> None:
@@ -272,7 +274,7 @@ async def main(args: argparse.Namespace) -> None:
     bucket = args.s3_bucket if args.s3_bucket is not None else os.environ.get(
         "S3_BUCKET", "hdjung-disaggregation-result"
     )
-    s3_stop = start_s3_sync(bucket, interval=int(os.environ.get("S3_SYNC_INTERVAL", "30")))
+    s3_stop = start_s3_sync(bucket, config, interval=int(os.environ.get("S3_SYNC_INTERVAL", "30")))
 
     points = build_grid()
     print(f"Grid: {len(points)} points × num_prompts={NUM_PROMPTS}", flush=True)

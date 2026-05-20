@@ -57,6 +57,8 @@ fi
 # 뭐가 필수고 아닌지 확인
 
 uv pip install httpx fastapi uvicorn numpy packaging aiohttp 2>/dev/null || true
+# quart: required by benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py (P2pNccl proxy)
+uv pip install quart 2>/dev/null || true
 
 # ── 5b. system tools ─────────────────────────────────────────────────────────
 # 네트워크 대역폭 측정기 (ifstat) 현재 1초당 네트워크 데이터가 몇 메가바이트나 흐르고 있는지를 기록해 주는 아주 가벼운 툴
