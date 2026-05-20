@@ -346,13 +346,14 @@ class S3Syncer:
 async def wait_for_health(base_url: str, timeout_s: int = 300) -> None:
     import aiohttp
     deadline = time.time() + timeout_s
-    print(f"Waiting for {base_url}/v1/models ...", flush=True)
+    print(f"Waiting for {base_url}/v1/completions ...", flush=True)
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(connector=connector) as session:
         while time.time() < deadline:
             try:
-                async with session.get(
-                    f"{base_url}/v1/models",
+                async with session.post(
+                    f"{base_url}/v1/completions",
+                    json={"model": "llama-3.1-8b", "prompt": "hi", "max_tokens": 1},
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
                     if resp.status == 200:
