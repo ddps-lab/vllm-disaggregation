@@ -45,7 +45,7 @@ PROXY_SCRIPT="$REPO_ROOT/benchmarks/disagg_benchmarks/disagg_prefill_proxy_serve
 
 MODEL="${MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
-GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.70}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-127.0.0.1}"
@@ -195,7 +195,7 @@ configC1_decode() {
  "kv_role":"kv_consumer",
  "kv_rank":1,
  "kv_parallel_size":2,
- "kv_buffer_size":"2e9",
+ "kv_buffer_size":"1e9",
  "kv_port":"14700",
  "kv_connector_extra_config":{
    "proxy_ip":"$VLLM_HOST_IP",
@@ -278,7 +278,7 @@ configD_prefill() {
  "kv_role":"kv_producer",
  "kv_rank":0,
  "kv_parallel_size":1,
- "kv_buffer_size":"2e9",
+ "kv_buffer_size":"1e9",
  "kv_port":"14600",
  "kv_connector_extra_config":{
    "proxy_ip":"$PROXY_IP",
@@ -330,7 +330,7 @@ configD_decode() {
  "kv_role":"kv_consumer",
  "kv_rank":1,
  "kv_parallel_size":1,
- "kv_buffer_size":"2e9",
+ "kv_buffer_size":"1e9",
  "kv_port":"14700",
  "kv_connector_extra_config":{
    "proxy_ip":"$PROXY_IP",
