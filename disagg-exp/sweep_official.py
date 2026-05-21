@@ -156,6 +156,7 @@ def run_one(
         "--base-url", base_url,
         "--endpoint", "/v1/completions",
         "--model", MODEL_NAME,
+        "--tokenizer", "meta-llama/Llama-3.1-8B-Instruct",
         "--dataset-name", "random",
         "--random-input-len", str(prefill_len),
         "--random-output-len", str(decode_len),
