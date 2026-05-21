@@ -314,7 +314,8 @@ launch_proxy() {
         --port "$frontend_port" \
         --prefill-url "http://$prefill_host:8100" \
         --decode-url  "http://$decode_host:8200" \
-        --kv-host     "$prefill_host" \
+        --prefill-kv-host "$prefill_host" \
+        --decode-kv-host  "$decode_host" \
         --prefill-kv-port "$prefill_kv_port" \
         --decode-kv-port  "$decode_kv_port" \
         2>&1 | tee "$LOG_DIR/pd_proxy_$(hostname).log"
