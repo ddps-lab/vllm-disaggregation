@@ -245,6 +245,7 @@ configD_prefill() {
     export NCCL_MAX_NCHANNELS=8
     export NCCL_MIN_NCHANNELS=8
     export NCCL_CUMEM_ENABLE=1
+    export PYTHONFAULTHANDLER=1
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
@@ -280,6 +281,7 @@ configD_decode() {
     export NCCL_MAX_NCHANNELS=8
     export NCCL_MIN_NCHANNELS=8
     export NCCL_CUMEM_ENABLE=1
+    export PYTHONFAULTHANDLER=1
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
