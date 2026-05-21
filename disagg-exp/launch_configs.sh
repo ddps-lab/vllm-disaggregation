@@ -245,6 +245,7 @@ configD_prefill() {
     export PYTHONFAULTHANDLER=1
     export NCCL_DEBUG=INFO
     export NCCL_DEBUG_SUBSYS=INIT,ENV
+    export NCCL_NET=Socket
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
@@ -280,6 +281,7 @@ configD_decode() {
     export PYTHONFAULTHANDLER=1
     export NCCL_DEBUG=INFO
     export NCCL_DEBUG_SUBSYS=INIT,ENV
+    export NCCL_NET=Socket
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
