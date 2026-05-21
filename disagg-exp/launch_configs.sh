@@ -260,6 +260,7 @@ configD_prefill() {
     export MALLOC_PERTURB_=$(( RANDOM % 256 ))
 
     export NCCL_CUMEM_ENABLE=0
+    export NCCL_NET=Socket
 
     echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
     echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_prefill_*.log"
@@ -312,6 +313,7 @@ configD_decode() {
     export MALLOC_PERTURB_=$(( RANDOM % 256 ))
 
     export NCCL_CUMEM_ENABLE=0
+    export NCCL_NET=Socket
 
     echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
     echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_decode_*.log"
