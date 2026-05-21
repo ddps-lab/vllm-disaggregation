@@ -243,6 +243,8 @@ configD_prefill() {
     echo "[launch] configD prefill: TP=1, my_ip=$VLLM_HOST_IP, decoder=$decoder_host"
     
     export PYTHONFAULTHANDLER=1
+    export NCCL_DEBUG=INFO
+    export NCCL_DEBUG_SUBSYS=INIT,ENV
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
@@ -276,6 +278,8 @@ configD_decode() {
     echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP"
     
     export PYTHONFAULTHANDLER=1
+    export NCCL_DEBUG=INFO
+    export NCCL_DEBUG_SUBSYS=INIT,ENV
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
