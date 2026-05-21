@@ -45,7 +45,7 @@ PROXY_SCRIPT="$REPO_ROOT/benchmarks/disagg_benchmarks/disagg_prefill_proxy_serve
 
 MODEL="${MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
-GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.70}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.75}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-127.0.0.1}"
