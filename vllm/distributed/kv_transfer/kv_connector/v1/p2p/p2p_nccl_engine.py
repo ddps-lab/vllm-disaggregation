@@ -36,33 +36,11 @@ DEFAULT_MEM_POOL_SIZE_GB = 32
 
 @contextmanager
 def set_p2p_nccl_context(num_channels: str):
-    original_values: dict[str, Any] = {}
-    env_vars = [
-        "NCCL_MAX_NCHANNELS",
-        "NCCL_MIN_NCHANNELS",
-        "NCCL_CUMEM_ENABLE",
-        "NCCL_BUFFSIZE",
-        "NCCL_PROTO",  # LL,LL128,SIMPLE
-        "NCCL_ALGO",  # RING,TREE
-    ]
-
-    for var in env_vars:
-        original_values[var] = os.environ.get(var)
-
-    logger.info("set_p2p_nccl_context, original_values: %s", original_values)
-
-    try:
-        os.environ["NCCL_MAX_NCHANNELS"] = num_channels
-        os.environ["NCCL_MIN_NCHANNELS"] = num_channels
-        # Fix NCCL double free bug by explicitly disabling CUMEM
-        os.environ["NCCL_CUMEM_ENABLE"] = "0"
-        yield
-    finally:
-        for var in env_vars:
-            if original_values[var] is not None:
-                os.environ[var] = original_values[var]
-            else:
-                os.environ.pop(var, None)
+    # WARNING: Dynamically modifying os.environ in a multi-threaded Python process
+    # causes a glibc 'double free or corruption' when other threads call getenv().
+    # We also cannot set NCCL_MAX_NCHANNELS globally because it breaks vLLM's internal NCCL.
+    # Therefore, we MUST let NCCL use its default settings.
+    yield
 
 
 @dataclass
