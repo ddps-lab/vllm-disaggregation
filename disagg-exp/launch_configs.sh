@@ -242,9 +242,6 @@ configD_prefill() {
     fi
     echo "[launch] configD prefill: TP=1, my_ip=$VLLM_HOST_IP, decoder=$decoder_host"
     
-    export NCCL_MAX_NCHANNELS=8
-    export NCCL_MIN_NCHANNELS=8
-    export NCCL_CUMEM_ENABLE=1
     export PYTHONFAULTHANDLER=1
     
     CUDA_VISIBLE_DEVICES=0 \
@@ -278,9 +275,6 @@ JSON
 configD_decode() {
     echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP"
     
-    export NCCL_MAX_NCHANNELS=8
-    export NCCL_MIN_NCHANNELS=8
-    export NCCL_CUMEM_ENABLE=1
     export PYTHONFAULTHANDLER=1
     
     CUDA_VISIBLE_DEVICES=0 \
