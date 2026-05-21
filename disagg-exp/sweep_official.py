@@ -172,7 +172,6 @@ def run_one(
         "--save-detailed",
         "--result-dir", str(result_dir),
         "--result-filename", result_filename,
-        "--disable-tqdm",
         # record context in result JSON
         "--metadata",
         f"config={config}",
