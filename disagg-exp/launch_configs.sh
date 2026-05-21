@@ -253,7 +253,7 @@ configD_prefill() {
  "kv_role":"kv_producer",
  "kv_rank":0,
  "kv_parallel_size":1,
- "kv_buffer_size":"1e1",
+ "kv_buffer_size":"2e9",
  "kv_port":"14600",
  "kv_connector_extra_config":{
    "proxy_ip":"$PROXY_IP",
