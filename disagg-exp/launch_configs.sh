@@ -55,7 +55,7 @@ PROXY_PORT="${PROXY_PORT:-30001}"
 
 # Default NCCL settings — safe defaults for AWS. Override before calling if needed.
 export NCCL_IB_DISABLE="${NCCL_IB_DISABLE:-1}"
-export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-ens5}"
+export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-enp39s0}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 
 mkdir -p "$LOG_DIR"
