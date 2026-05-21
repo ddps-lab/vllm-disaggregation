@@ -57,11 +57,14 @@ def set_p2p_nccl_context(num_channels: str):
         os.environ["NCCL_CUMEM_ENABLE"] = "1"
         yield
     finally:
+        # Avoid double free or corruption from glibc unsetenv being called concurrently
+        # while NCCL background threads might be reading environ.
+        time.sleep(0.5)
         for var in env_vars:
             if original_values[var] is not None:
                 os.environ[var] = original_values[var]
-            else:
-                os.environ.pop(var, None)
+            # else: Do NOT pop to avoid unsetenv
+            #    os.environ.pop(var, None)
 
 
 @dataclass
