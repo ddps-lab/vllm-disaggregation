@@ -49,6 +49,8 @@ GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.85}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-127.0.0.1}"
+# (Fix: Config D cross-node proxy 통신을 위해 PROXY_IP 추가 연동)
+export PROXY_IP="${PROXY_IP:-$VLLM_HOST_IP}"
 PROXY_PORT="${PROXY_PORT:-30001}"
 
 # Default NCCL settings — safe defaults for AWS. Override before calling if needed.
@@ -73,7 +75,8 @@ COMMON_FLAGS=(
     --max-model-len "$MAX_MODEL_LEN"
     --gpu-memory-utilization "$GPU_MEM_UTIL"
     --no-enable-prefix-caching
-    --dtype bfloat16
+    # (Fix: T4 GPU 호환성을 위해 bfloat16 대신 half 강제 적용)
+    --dtype half
     --max-num-seqs "${MAX_NUM_SEQS:-512}"
 )
 
@@ -248,11 +251,11 @@ configD_prefill() {
 {"kv_connector":"P2pNcclConnector",
  "kv_role":"kv_producer",
  "kv_rank":0,
- "kv_parallel_size":2,
+ "kv_parallel_size":1,  # (Fix: Config D는 TP=1 이므로 kv_parallel_size=1)
  "kv_buffer_size":"1e1",
  "kv_port":"14600",
  "kv_connector_extra_config":{
-   "proxy_ip":"$VLLM_HOST_IP",
+   "proxy_ip":"$PROXY_IP",
    "proxy_port":"$PROXY_PORT",
    "http_ip":"$VLLM_HOST_IP",
    "http_port":"8100",
@@ -264,6 +267,7 @@ JSON
 )" 2>&1 | tee "$LOG_DIR/vllm_configD_prefill_$(hostname).log"
 }
 
+# 여기 Prefill ip넣어야함
 configD_decode() {
     echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP"
     CUDA_VISIBLE_DEVICES=0 \
@@ -276,11 +280,11 @@ configD_decode() {
 {"kv_connector":"P2pNcclConnector",
  "kv_role":"kv_consumer",
  "kv_rank":1,
- "kv_parallel_size":2,
+ "kv_parallel_size":1,  # (Fix: Config D는 TP=1 이므로 kv_parallel_size=1)
  "kv_buffer_size":"2e9",
  "kv_port":"14700",
  "kv_connector_extra_config":{
-   "proxy_ip":"$VLLM_HOST_IP",
+   "proxy_ip":"$PROXY_IP",
    "proxy_port":"$PROXY_PORT",
    "http_ip":"$VLLM_HOST_IP",
    "http_port":"8200",

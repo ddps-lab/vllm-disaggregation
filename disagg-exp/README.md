@@ -150,11 +150,12 @@ PID 파일: `$EXP_LOG_DIR/.pid_{nvidia_dmon,ifstat,dcgm_loop}` → 재실행 시
 
 공통 flag (`COMMON_FLAGS`):
 ```
---no-enable-prefix-caching --dtype bfloat16 --served-model-name llama-3.1-8b
+--no-enable-prefix-caching --dtype half --served-model-name llama-3.1-8b
 --max-model-len $MAX_MODEL_LEN --gpu-memory-utilization $GPU_MEM_UTIL
 --max-num-seqs ${MAX_NUM_SEQS:-512}
 ```
 CUDA Graph **ON** (enforce-eager 안 씀, `ENFORCE_EAGER=1` env로 override).
+(T4 GPU와의 호환성 문제로 `--dtype half` 로 강제 고정되었습니다.)
 
 **Port plan**:
 - Prefill HTTP: 8100, kv_port: 14600 (+rank)
@@ -177,9 +178,9 @@ vllm bench serve \
   --save-result --save-detailed \
   --result-dir $EXP_LOG_DIR/<config>/ \
   --result-filename p{prefill}_d{decode}_r{rate}.json \
-  --extra-body '{"min_tokens": <decode_len>}' \
   --disable-tqdm
 ```
+*(주의: Proxy의 `max_tokens=1` 정책 충돌 우회 및 400 Bad Request 에러를 방지하기 위해 payload에서 `min_tokens` 주입을 제거하였습니다. 또한, Proxy 서버에 `/health` 엔드포인트가 없는 점을 고려하여 404/405 응답도 서버 활성화로 간주하도록 헬스체크가 수정되었습니다.)*
 
 Resume: `.done_<point>` / `.failed_<point>` 마커. S3 sync 백그라운드 (`raw/official/{date}/{host}/{config}/`).
 
@@ -195,16 +196,16 @@ Resume: `.done_<point>` / `.failed_<point>` 마커. S3 sync 백그라운드 (`ra
 
 ## 5. 워크로드 그리드
 
-```
-PREFILL_LENS = [512, 2048, 8192]
-DECODE_LENS  = [128, 512, 1024, 4096]
-RATES        = [1.0, 2.0, 4.0]
+```python
+PD_PAIRS = [
+    (2048, 128),
+    (1024, 512),
+    (128, 2048)
+]
+RATES = [1.0, 2.0, 4.0]
 
-Cross 1 (prefill × rate, decode=512 고정):  3 × 3 = 9 points
-Cross 2 (decode × rate, prefill=2048 고정): 4 × 3 = 12 points
-                                            (중복 제거)
-Total: ~18 points/config
-num_prompts = 350 (warmup 50 + measured 300, analyze에서 앞 50 skip)
+Total: 9 points/config (3 pairs × 3 rates)
+num_prompts = 300 (warmup 10 + measured 290, analyze에서 앞 10 skip)
 ```
 
 env override: `SWEEP_PREFILL_LENS=512,2048 SWEEP_RATES=1.0,2.0 ...`
@@ -392,3 +393,14 @@ $EXP_LOG_DIR/
 S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{YYYYMMDD}/{hostname}/{config}/`
 
 (커스텀 브랜치는 `raw/custom/...`, 이 브랜치는 `raw/official/...` — 안 섞임.)
+
+---
+
+## 10. KV 캐시 통신 오버헤드 로깅
+
+`p2p_nccl_connector.py`에는 큐(Queue) 대기 시간을 포함한 시스템 전체의 엔드투엔드(End-to-End) KV 캐시 전송 지연 시간을 측정하도록 로깅이 추가되어 있습니다. 이 시간은 순수 네트워크 통신 뿐만 아니라 버퍼 동기화와 큐 대기로 인해 소비되는 전체 파이썬 오버헤드를 포함합니다.
+
+- **Prefill (송신)**: `큐 대기 포함 전체 Send 시간: OOO.OO ms`
+- **Decode (수신)**: `대기 시간 포함 전체 Recv 시간: OOO.OO ms`
+
+결과 폴더 내의 `prefill_stdout.log` 및 `decode_stdout.log`를 통해 요청당 오버헤드 병목 현상을 정확히 파악할 수 있습니다.

@@ -38,7 +38,7 @@ COST_PER_HR = {
 
 # How many of the leading requests to discard as warmup before computing
 # percentile stats (analogous to sweep.py's WARMUP_N).
-DEFAULT_WARMUP_SKIP = int(os.environ.get("ANALYZE_WARMUP_SKIP", "50"))
+DEFAULT_WARMUP_SKIP = int(os.environ.get("ANALYZE_WARMUP_SKIP", "10"))
 
 
 # ── load ──────────────────────────────────────────────────────────────────────

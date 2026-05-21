@@ -199,6 +199,9 @@ class P2pNcclConnector(KVConnectorBase_V1):
         if metadata is None:
             return
 
+        import time
+        start_time = time.time()
+
         # Load the KV for each request each layer
         for request in metadata.requests:
             request_id = request.request_id
@@ -227,6 +230,10 @@ class P2pNcclConnector(KVConnectorBase_V1):
                 inject_kv_into_layer(
                     layer, kv_cache, request.block_ids, request.request_id
                 )
+
+        if metadata.requests:
+            end_time = time.time()
+            logger.info("대기 시간 포함 전체 Recv 시간: %.2f ms", (end_time - start_time) * 1000)
 
     def wait_for_layer_load(self, layer_name: str) -> None:
         """Blocking until the KV for a specific layer is loaded into vLLM's
@@ -296,6 +303,11 @@ class P2pNcclConnector(KVConnectorBase_V1):
 
         connector_metadata = self._get_connector_metadata()
         assert isinstance(connector_metadata, P2pNcclConnectorMetadata)
+
+        import time
+        if not hasattr(self, "send_start_time") and connector_metadata.requests:
+            self.send_start_time = time.time()
+
         for request in connector_metadata.requests:
             request_id = request.request_id
             ip, port = self.parse_request_id(request_id, True)
@@ -310,6 +322,12 @@ class P2pNcclConnector(KVConnectorBase_V1):
         if self.is_producer:
             assert self.p2p_nccl_engine is not None
             self.p2p_nccl_engine.wait_for_sent()
+
+            import time
+            if hasattr(self, "send_start_time"):
+                total_time = time.time() - self.send_start_time
+                logger.info("큐 대기 포함 전체 Send 시간: %.2f ms", total_time * 1000)
+                del self.send_start_time
 
     def get_finished(
         self, finished_req_ids: set[str], **kwargs: Any

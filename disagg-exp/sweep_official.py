@@ -9,10 +9,11 @@ Usage:
     python disagg-exp/sweep_official.py --config A1 --base-url http://localhost:8000
 
 Env overrides (same names as sweep.py):
-    SWEEP_PREFILL_LENS=512,2048,8192
-    SWEEP_DECODE_LENS=128,512,1024,4096
+    # Note: PREFILL_LENS and DECODE_LENS combinations are now restricted to
+    # exactly 3 defined pairs to prevent combinatorial explosion:
+    # (2048, 128), (1024, 512), (128, 2048)
     SWEEP_RATES=1.0,2.0,4.0
-    SWEEP_NUM_PROMPTS=350         total prompts per point (warmup 50 + measured 300)
+    SWEEP_NUM_PROMPTS=300         total prompts per point (warmup 10 + measured 290)
     EXP_LOG_DIR=./results
     S3_BUCKET=hdjung-disaggregation-result    ""=disable
 
@@ -44,15 +45,15 @@ def _parse_list(env_key: str, default: list[float]) -> list[float]:
         return [float(x) for x in raw.split(",")]
     return default
 
-PREFILL_LENS = [int(x) for x in _parse_list("SWEEP_PREFILL_LENS", [512, 2048, 8192])]
-DECODE_LENS  = [int(x) for x in _parse_list("SWEEP_DECODE_LENS",  [128, 512, 1024, 4096])]
-RATES        = _parse_list("SWEEP_RATES", [1.0, 2.0, 4.0])
+PD_PAIRS = [
+    (2048, 128),
+    (1024, 512),
+    (128, 2048),
+]
+RATES = _parse_list("SWEEP_RATES", [0.5, 1.0, 2.0])
 
-NUM_PROMPTS = int(os.environ.get("SWEEP_NUM_PROMPTS", "350"))
-WARMUP_N    = int(os.environ.get("SWEEP_WARMUP_N",   "50"))   # not enforced server-side; analyze can skip
-
-FIXED_DECODE  = int(os.environ.get("SWEEP_FIXED_DECODE",  "512"))
-FIXED_PREFILL = int(os.environ.get("SWEEP_FIXED_PREFILL", "2048"))
+NUM_PROMPTS = int(os.environ.get("SWEEP_NUM_PROMPTS", "300"))
+WARMUP_N    = int(os.environ.get("SWEEP_WARMUP_N",   "10"))   # not enforced server-side; analyze can skip
 
 LOG_DIR = os.environ.get("EXP_LOG_DIR", "./results")
 MODEL_NAME = "llama-3.1-8b"  # must match --served-model-name on the server
@@ -105,6 +106,12 @@ def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Eve
 
 # ── health check (copied behavior from sweep.py) ──────────────────────────────
 async def wait_for_health(base_url: str, timeout_s: int = 600) -> None:
+    """
+    Wait for the server to be ready. 
+    Note: The FastAPI proxy lacks a dedicated /health endpoint. 
+    Thus, 404 (Not Found) or 405 (Method Not Allowed) responses 
+    indicate that the server process is alive and successfully responding.
+    """
     deadline = time.time() + timeout_s
     print(f"Waiting for {base_url}/health ...", flush=True)
     connector = aiohttp.TCPConnector()
@@ -115,7 +122,7 @@ async def wait_for_health(base_url: str, timeout_s: int = 600) -> None:
                     f"{base_url}/health",
                     timeout=aiohttp.ClientTimeout(total=5),
                 ) as resp:
-                    if resp.status == 200:
+                    if resp.status in (200, 404, 405):
                         print("  server ready.", flush=True)
                         return
             except Exception:
@@ -175,10 +182,12 @@ def run_one(
     ]
 
     # Force exact output length: ask the server to keep generating to decode_len.
-    # vLLM's RandomDataset already sets max_tokens=output_len, but it does not
-    # set min_tokens. min_tokens guarantees we hit the target.
-    if extra_body_min:
-        cmd += ["--extra-body", json.dumps({"min_tokens": decode_len})]
+    # vLLM's RandomDataset already sets max_tokens=output_len.
+    # We rely on --ignore-eos to guarantee we hit the target decode_len.
+    # (Do not pass min_tokens; the proxy overrides max_tokens=1 on the prefill side
+    # causing a 400 Bad Request if min_tokens > max_tokens).
+    # if extra_body_min:
+    #     cmd += ["--extra-body", json.dumps({"min_tokens": decode_len})]
 
     log_path = result_dir / f"{point_id}.log"
     print(f"[run] {point_id} → {' '.join(cmd[:6])} ... (logs: {log_path})", flush=True)
@@ -246,12 +255,9 @@ def build_grid() -> list[tuple[int, int, float]]:
             seen.add(key)
             points.append(key)
 
-    for pl in PREFILL_LENS:
+    for pl, dl in PD_PAIRS:
         for r in RATES:
-            _add(pl, FIXED_DECODE, r)
-    for dl in DECODE_LENS:
-        for r in RATES:
-            _add(FIXED_PREFILL, dl, r)
+            _add(pl, dl, r)
     return points
 
 
