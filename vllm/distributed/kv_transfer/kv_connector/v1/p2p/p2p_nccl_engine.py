@@ -34,37 +34,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_MEM_POOL_SIZE_GB = 32
 
 
-_env_lock = threading.Lock()
-
 @contextmanager
 def set_p2p_nccl_context(num_channels: str):
-    with _env_lock:
-        original_values: dict[str, Any] = {}
-        env_vars = [
-            "NCCL_MAX_NCHANNELS",
-            "NCCL_MIN_NCHANNELS",
-            "NCCL_CUMEM_ENABLE",
-            "NCCL_BUFFSIZE",
-            "NCCL_PROTO",  # LL,LL128,SIMPLE
-            "NCCL_ALGO",  # RING,TREE
-        ]
-
-        for var in env_vars:
-            original_values[var] = os.environ.get(var)
-
-        logger.info("set_p2p_nccl_context, original_values: %s", original_values)
-
-        try:
-            os.environ["NCCL_MAX_NCHANNELS"] = num_channels
-            os.environ["NCCL_MIN_NCHANNELS"] = num_channels
-            os.environ["NCCL_CUMEM_ENABLE"] = "1"
-            yield
-        finally:
-            for var in env_vars:
-                if original_values[var] is not None:
-                    os.environ[var] = original_values[var]
-                else:
-                    os.environ.pop(var, None)
+    # WARNING: Modifying os.environ concurrently crashes glibc (double free).
+    # All environment variables are now set safely in __init__.
+    yield
 
 
 @dataclass
@@ -177,6 +151,8 @@ class P2pNcclEngine:
         self.nccl_num_channels = self.config.get_from_extra_config(
             "nccl_num_channels", "8"
         )
+        
+        # Apply environment variables ONCE globally to prevent glibc double free
         os.environ["NCCL_MAX_NCHANNELS"] = str(self.nccl_num_channels)
         os.environ["NCCL_MIN_NCHANNELS"] = str(self.nccl_num_channels)
         os.environ["NCCL_CUMEM_ENABLE"] = "1"
@@ -382,20 +358,7 @@ class P2pNcclEngine:
             remote_address, message = self.router_socket.recv_multipart()
             data = msgpack.loads(message)
             if data["cmd"] == "NEW":
-                logger.info("MARKER 1: Received NEW command")
                 unique_id = self.nccl.unique_id_from_bytes(bytes(data["unique_id"]))
-                
-                import psutil
-                mem = psutil.virtual_memory()
-                logger.info("MARKER 2: Memory before ncclCommInitRank: Total=%sGB, Available=%sGB", 
-                            round(mem.total / (1024**3), 2), round(mem.available / (1024**3), 2))
-                logger.info("MARKER 3: If this is the last log before 'double free', the AWS Security Group FIREWALL is blocking NCCL ephemeral ports!")
-                
-                # Flush stdout and stderr to guarantee logs are visible before a crash
-                import sys
-                sys.stdout.flush()
-                sys.stderr.flush()
-
                 with torch.accelerator.device_index(self.device.index):
                     rank = 1
                     with set_p2p_nccl_context(self.nccl_num_channels):
@@ -403,7 +366,6 @@ class P2pNcclEngine:
                             2, unique_id, rank
                         )
                     self.comms[remote_address.decode()] = (comm, rank)
-                    logger.info("MARKER 4: ncclCommInitRank Success!")
                     logger.info(
                         "🤝ncclCommInitRank Success, %s👈%s, MyRank:%s",
                         self.zmq_address,
