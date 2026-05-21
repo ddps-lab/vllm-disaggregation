@@ -153,9 +153,10 @@ class P2pNcclEngine:
         )
         
         # Apply environment variables ONCE globally to prevent glibc double free
-        os.environ["NCCL_MAX_NCHANNELS"] = str(self.nccl_num_channels)
-        os.environ["NCCL_MIN_NCHANNELS"] = str(self.nccl_num_channels)
-        os.environ["NCCL_CUMEM_ENABLE"] = "1"
+        # WARNING: We completely removed os.environ modifications here because
+        # vLLM's background PyTorch threads are ALREADY running by the time __init__ is called.
+        # Modifying os.environ here STILL causes 'double free or corruption'.
+        # These variables MUST be exported in the bash script (launch_configs.sh) instead!
 
         self._listener_thread = threading.Thread(
             target=self.listen_for_requests, daemon=True
