@@ -245,12 +245,28 @@ configD_prefill() {
     echo "[launch] configD prefill: TP=1, my_ip=$VLLM_HOST_IP, decoder=$decoder_host"
 
     export PYTHONFAULTHANDLER=1
-    export NCCL_DEBUG=INFO
-    export NCCL_DEBUG_SUBSYS=INIT,ENV
+
+    # ─ Level 1: NCCL detailed logging ──────────────────────────────────────
+    export NCCL_DEBUG=TRACE
+    export NCCL_DEBUG_SUBSYS=INIT,COLL,P2P,ENV
+
+    # ─ Level 2: System call tracing (strace) ───────────────────────────────
+    # Uncomment to enable strace output to file
+    # STRACE_CMD="strace -e trace=memory,mmap,madvise -f -o $LOG_DIR/strace_prefill_$(hostname)_$(date +%s).log"
+
+    # ─ Level 3: AddressSanitizer (memory debugging) ────────────────────────
+    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$LOG_DIR/asan_prefill"
+    export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
+    export MALLOC_PERTURB_=$(( RANDOM % 256 ))
+
     export NCCL_CUMEM_ENABLE=0
-    
+
+    echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
+    echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_prefill_*.log"
+    echo "[launch] ASAN logs → $LOG_DIR/asan_prefill*"
+
     CUDA_VISIBLE_DEVICES=0 \
-    vllm serve "${COMMON_FLAGS[@]}" \
+    ${STRACE_CMD:-} vllm serve "${COMMON_FLAGS[@]}" \
         --no-enable-chunked-prefill \
         --tensor-parallel-size 1 \
         --pipeline-parallel-size 1 \
@@ -281,12 +297,28 @@ configD_decode() {
     echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP"
 
     export PYTHONFAULTHANDLER=1
-    export NCCL_DEBUG=INFO
-    export NCCL_DEBUG_SUBSYS=INIT,ENV
+
+    # ─ Level 1: NCCL detailed logging ──────────────────────────────────────
+    export NCCL_DEBUG=TRACE
+    export NCCL_DEBUG_SUBSYS=INIT,COLL,P2P,ENV
+
+    # ─ Level 2: System call tracing (strace) ───────────────────────────────
+    # Uncomment to enable strace output to file
+    # STRACE_CMD="strace -e trace=memory,mmap,madvise -f -o $LOG_DIR/strace_decode_$(hostname)_$(date +%s).log"
+
+    # ─ Level 3: AddressSanitizer (memory debugging) ────────────────────────
+    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$LOG_DIR/asan_decode"
+    export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
+    export MALLOC_PERTURB_=$(( RANDOM % 256 ))
+
     export NCCL_CUMEM_ENABLE=0
-    
+
+    echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
+    echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_decode_*.log"
+    echo "[launch] ASAN logs → $LOG_DIR/asan_decode*"
+
     CUDA_VISIBLE_DEVICES=0 \
-    vllm serve "${COMMON_FLAGS[@]}" \
+    ${STRACE_CMD:-} vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 1 \
         --pipeline-parallel-size 1 \
         --host 0.0.0.0 \
