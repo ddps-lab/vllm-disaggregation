@@ -36,35 +36,12 @@ DEFAULT_MEM_POOL_SIZE_GB = 32
 
 @contextmanager
 def set_p2p_nccl_context(num_channels: str):
-    original_values: dict[str, Any] = {}
-    env_vars = [
-        "NCCL_MAX_NCHANNELS",
-        "NCCL_MIN_NCHANNELS",
-        "NCCL_CUMEM_ENABLE",
-        "NCCL_BUFFSIZE",
-        "NCCL_PROTO",  # LL,LL128,SIMPLE
-        "NCCL_ALGO",  # RING,TREE
-    ]
-
-    for var in env_vars:
-        original_values[var] = os.environ.get(var)
-
-    logger.info("set_p2p_nccl_context, original_values: %s", original_values)
-
-    try:
-        os.environ["NCCL_MAX_NCHANNELS"] = num_channels
-        os.environ["NCCL_MIN_NCHANNELS"] = num_channels
-        os.environ["NCCL_CUMEM_ENABLE"] = "1"
-        yield
-    finally:
-        # Avoid double free or corruption from glibc unsetenv being called concurrently
-        # while NCCL background threads might be reading environ.
-        time.sleep(0.5)
-        for var in env_vars:
-            if original_values[var] is not None:
-                os.environ[var] = original_values[var]
-            # else: Do NOT pop to avoid unsetenv
-            #    os.environ.pop(var, None)
+    # Fix for glibc "double free or corruption" bug:
+    # Do NOT modify os.environ inside this context manager because it is 
+    # executed concurrently by background threads (_listener_thread, _send_thread).
+    # Concurrent C putenv/setenv calls are not thread-safe.
+    # The environment variables are now set once in __init__ instead.
+    yield
 
 
 @dataclass
@@ -177,6 +154,12 @@ class P2pNcclEngine:
         self.nccl_num_channels = self.config.get_from_extra_config(
             "nccl_num_channels", "8"
         )
+        
+        # Set NCCL environment variables globally in the main thread during init
+        # to prevent thread-safety issues (double free) when spawned threads access NCCL.
+        os.environ["NCCL_MAX_NCHANNELS"] = self.nccl_num_channels
+        os.environ["NCCL_MIN_NCHANNELS"] = self.nccl_num_channels
+        os.environ["NCCL_CUMEM_ENABLE"] = "1"
 
         self._listener_thread = threading.Thread(
             target=self.listen_for_requests, daemon=True
