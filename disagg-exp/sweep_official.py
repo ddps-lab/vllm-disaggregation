@@ -192,12 +192,13 @@ def run_one(
     log_path = result_dir / f"{point_id}.log"
     print(f"[run] {point_id} → {' '.join(cmd[:6])} ... (logs: {log_path})", flush=True)
 
+    import shlex
+    cmd_str = f"{shlex.join(cmd)} 2>&1 | tee {log_path}"
     try:
-        with open(log_path, "w") as logf:
-            proc = subprocess.run(
-                cmd, stdout=logf, stderr=subprocess.STDOUT, check=False,
-                cwd=str(repo_root), timeout=3600,
-            )
+        proc = subprocess.run(
+            cmd_str, shell=True, executable="/bin/bash", check=False,
+            cwd=str(repo_root), timeout=3600,
+        )
     except subprocess.TimeoutExpired:
         print(f"  TIMEOUT after 3600s", flush=True)
         return False, None
