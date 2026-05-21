@@ -253,7 +253,7 @@ configD_prefill() {
  "kv_role":"kv_producer",
  "kv_rank":0,
  "kv_parallel_size":1,
- "kv_buffer_size":"1e1",
+ "kv_buffer_size":"1e8",
  "kv_port":"14600",
  "kv_connector_extra_config":{
    "proxy_ip":"$PROXY_IP",
@@ -262,7 +262,7 @@ configD_prefill() {
    "http_port":"8100",
    "send_type":"PUT_ASYNC",
    "nccl_num_channels":"8",
-   "mem_pool_size_gb":"4"
+   "mem_pool_size_gb":"0.5"
  }}
 JSON
 )" 2>&1 | tee "$LOG_DIR/vllm_configD_prefill_$(hostname).log"
@@ -282,7 +282,7 @@ configD_decode() {
  "kv_role":"kv_consumer",
  "kv_rank":1,
  "kv_parallel_size":1,
- "kv_buffer_size":"2e9",
+ "kv_buffer_size":"1e8",
  "kv_port":"14700",
  "kv_connector_extra_config":{
    "proxy_ip":"$PROXY_IP",
@@ -291,7 +291,7 @@ configD_decode() {
    "http_port":"8200",
    "send_type":"PUT_ASYNC",
    "nccl_num_channels":"8",
-   "mem_pool_size_gb":"4"
+   "mem_pool_size_gb":"0.5"
  }}
 JSON
 )" 2>&1 | tee "$LOG_DIR/vllm_configD_decode_$(hostname).log"
