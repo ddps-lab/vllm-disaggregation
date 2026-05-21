@@ -45,7 +45,7 @@ PROXY_SCRIPT="$REPO_ROOT/benchmarks/disagg_benchmarks/disagg_prefill_proxy_serve
 
 MODEL="${MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
-GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.78}"
+GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.82}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-127.0.0.1}"
@@ -287,7 +287,7 @@ configD_prefill() {
    "http_port":"8100",
    "send_type":"PUT_ASYNC",
    "nccl_num_channels":"8",
-   "mem_pool_size_gb":"8"
+   "mem_pool_size_gb":"16"
  }}
 JSON
 )" 2>&1 | tee "$LOG_DIR/vllm_configD_prefill_$(hostname).log"
@@ -339,7 +339,7 @@ configD_decode() {
    "http_port":"8200",
    "send_type":"PUT_ASYNC",
    "nccl_num_channels":"8",
-   "mem_pool_size_gb":"8"
+   "mem_pool_size_gb":"16"
  }}
 JSON
 )" 2>&1 | tee "$LOG_DIR/vllm_configD_decode_$(hostname).log"
