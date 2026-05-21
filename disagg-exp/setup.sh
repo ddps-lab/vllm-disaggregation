@@ -82,6 +82,13 @@ if ! command -v s5cmd &>/dev/null; then
     || echo "[setup] WARN: s5cmd install failed — S3 sync will not work"
 fi
 
+# nvtop: GPU 메모리 실시간 모니터링 (htop for GPU)
+# KV 캐시 전송 중 GPU 메모리 사용량을 실시간으로 보기 위함
+if ! command -v nvtop &>/dev/null; then
+    echo "[setup] installing nvtop ..."
+    sudo apt-get install -y -q nvtop 2>/dev/null || echo "[setup] WARN: apt install nvtop failed (non-root?)"
+fi
+
 # huggingface_hub CLI (for model download)
 # 허깅페이스 모델 다운로드 CLI 나중에 sweep시 허깅페이스 모델 다운로드할 때 사용
 python -c "import huggingface_hub" &>/dev/null \
