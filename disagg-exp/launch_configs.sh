@@ -287,7 +287,7 @@ configD_prefill() {
    "http_port":"8100",
    "send_type":"PUT_ASYNC",
    "nccl_num_channels":"8",
-   "mem_pool_size_gb":"16"
+   "mem_pool_size_gb":"8"
  }}
 JSON
 )" 2>&1 | tee "$LOG_DIR/vllm_configD_prefill_$(hostname).log"
@@ -339,7 +339,7 @@ configD_decode() {
    "http_port":"8200",
    "send_type":"PUT_ASYNC",
    "nccl_num_channels":"8",
-   "mem_pool_size_gb":"16"
+   "mem_pool_size_gb":"8"
  }}
 JSON
 )" 2>&1 | tee "$LOG_DIR/vllm_configD_decode_$(hostname).log"
