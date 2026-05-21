@@ -49,9 +49,12 @@ def _parse_list(env_key: str, default: list[float]) -> list[float]:
         return [float(x) for x in raw.split(",")]
     return default
 
-PREFILL_LENS = [int(x) for x in _parse_list("SWEEP_PREFILL_LENS", [512, 2048])]  # 질문 길이 (토큰 수). max 2048 (max-model-len=4096 제약)
-DECODE_LENS  = [int(x) for x in _parse_list("SWEEP_DECODE_LENS",  [128, 512, 1024])]  # 답변 길이. max 1024 (prefill+decode ≤ 4096)
-RATES        = _parse_list("SWEEP_RATES", [0.5, 1.0, 2.0])  # 초당 요청 수 (QPS)
+PD_PAIRS = [
+    (2048, 128),
+    (1024, 512),
+    (128, 2048),
+]
+RATES        = _parse_list("SWEEP_RATES", [1.0, 2.0, 4.0])  # 초당 요청 수 (QPS)
 
 WARMUP_N   = int(os.environ.get("SWEEP_WARMUP_N",   "10"))   # 준비운동 요청 수
 MEASURED_N = int(os.environ.get("SWEEP_MEASURED_N", "300"))  # 실전 측정 요청 수
@@ -411,12 +414,11 @@ async def main(args: argparse.Namespace) -> None:
     await wait_for_health(base_url)
 
     # ── Grid 조건표 생성 ──
-    # 모든 가능한 조합 (Prefill × Decode × Rate) 생성
+    # 정의된 (Prefill, Decode) 조합과 Rate의 교차 조합 생성
     points: list[tuple[int, int, float]] = []
-    for pl in PREFILL_LENS:
-        for dl in DECODE_LENS:
-            for r in RATES:
-                points.append((pl, dl, r))
+    for pl, dl in PD_PAIRS:
+        for r in RATES:
+            points.append((pl, dl, r))
 
     print(f"Grid: {len(points)} points × (warmup={WARMUP_N} + measured={MEASURED_N})", flush=True)
 
