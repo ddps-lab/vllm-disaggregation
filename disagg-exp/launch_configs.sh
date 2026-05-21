@@ -155,6 +155,7 @@ configB() {
 
 configC1_prefill() {
     echo "[launch] configC1 prefill: TP=2 PP=1 on GPU 0,1, port 8100"
+    export NCCL_CUMEM_ENABLE=0
     CUDA_VISIBLE_DEVICES=0,1 \
     vllm serve "${COMMON_FLAGS[@]}" \
         --no-enable-chunked-prefill \
@@ -183,6 +184,7 @@ JSON
 
 configC1_decode() {
     echo "[launch] configC1 decode: TP=2 PP=1 on GPU 2,3, port 8200"
+    export NCCL_CUMEM_ENABLE=0
     CUDA_VISIBLE_DEVICES=2,3 \
     vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 2 \
@@ -241,10 +243,11 @@ configD_prefill() {
         exit 1
     fi
     echo "[launch] configD prefill: TP=1, my_ip=$VLLM_HOST_IP, decoder=$decoder_host"
-    
+
     export PYTHONFAULTHANDLER=1
     export NCCL_DEBUG=INFO
     export NCCL_DEBUG_SUBSYS=INIT,ENV
+    export NCCL_CUMEM_ENABLE=0
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
@@ -276,10 +279,11 @@ JSON
 # 여기 Prefill ip넣어야함
 configD_decode() {
     echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP"
-    
+
     export PYTHONFAULTHANDLER=1
     export NCCL_DEBUG=INFO
     export NCCL_DEBUG_SUBSYS=INIT,ENV
+    export NCCL_CUMEM_ENABLE=0
     
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
