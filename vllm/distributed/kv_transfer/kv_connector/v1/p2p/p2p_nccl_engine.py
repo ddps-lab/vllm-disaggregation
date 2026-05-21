@@ -382,7 +382,20 @@ class P2pNcclEngine:
             remote_address, message = self.router_socket.recv_multipart()
             data = msgpack.loads(message)
             if data["cmd"] == "NEW":
+                logger.info("MARKER 1: Received NEW command")
                 unique_id = self.nccl.unique_id_from_bytes(bytes(data["unique_id"]))
+                
+                import psutil
+                mem = psutil.virtual_memory()
+                logger.info("MARKER 2: Memory before ncclCommInitRank: Total=%sGB, Available=%sGB", 
+                            round(mem.total / (1024**3), 2), round(mem.available / (1024**3), 2))
+                logger.info("MARKER 3: If this is the last log before 'double free', the AWS Security Group FIREWALL is blocking NCCL ephemeral ports!")
+                
+                # Flush stdout and stderr to guarantee logs are visible before a crash
+                import sys
+                sys.stdout.flush()
+                sys.stderr.flush()
+
                 with torch.accelerator.device_index(self.device.index):
                     rank = 1
                     with set_p2p_nccl_context(self.nccl_num_channels):
@@ -390,6 +403,7 @@ class P2pNcclEngine:
                             2, unique_id, rank
                         )
                     self.comms[remote_address.decode()] = (comm, rank)
+                    logger.info("MARKER 4: ncclCommInitRank Success!")
                     logger.info(
                         "🤝ncclCommInitRank Success, %s👈%s, MyRank:%s",
                         self.zmq_address,
