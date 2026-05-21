@@ -251,7 +251,7 @@ configD_prefill() {
 {"kv_connector":"P2pNcclConnector",
  "kv_role":"kv_producer",
  "kv_rank":0,
- "kv_parallel_size":1,  # (Fix: Config D는 TP=1 이므로 kv_parallel_size=1)
+ "kv_parallel_size":1,
  "kv_buffer_size":"1e1",
  "kv_port":"14600",
  "kv_connector_extra_config":{
@@ -280,7 +280,7 @@ configD_decode() {
 {"kv_connector":"P2pNcclConnector",
  "kv_role":"kv_consumer",
  "kv_rank":1,
- "kv_parallel_size":1,  # (Fix: Config D는 TP=1 이므로 kv_parallel_size=1)
+ "kv_parallel_size":1,
  "kv_buffer_size":"2e9",
  "kv_port":"14700",
  "kv_connector_extra_config":{
