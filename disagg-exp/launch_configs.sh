@@ -43,7 +43,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROXY_SCRIPT="$REPO_ROOT/benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py"
 
-MODEL="${MODEL:-meta-llama/Llama-3.1-8B-Instruct}"
+MODEL="${MODEL:-hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.82}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
@@ -79,6 +79,9 @@ COMMON_FLAGS=(
     # (Fix: T4 GPU 호환성을 위해 bfloat16 대신 half 강제 적용)
     --dtype half
     --max-num-seqs "${MAX_NUM_SEQS:-512}"
+    # AWQ INT4 weights + FP8 KV cache (g6.xlarge throughput 극대화)
+    --quantization awq
+    --kv-cache-dtype fp8
 )
 
 # Optional: enforce-eager fallback. CUDA Graph capture can clash with the
@@ -195,7 +198,7 @@ configC1_decode() {
  "kv_role":"kv_consumer",
  "kv_rank":1,
  "kv_parallel_size":2,
- "kv_buffer_size":"1e9",
+ "kv_buffer_size":"2e9",
  "kv_port":"14700",
  "kv_connector_extra_config":{
    "proxy_ip":"$VLLM_HOST_IP",
@@ -278,7 +281,7 @@ configD_prefill() {
  "kv_role":"kv_producer",
  "kv_rank":0,
  "kv_parallel_size":1,
- "kv_buffer_size":"1e9",
+ "kv_buffer_size":"2e9",
  "kv_port":"14600",
  "kv_connector_extra_config":{
    "proxy_ip":"$PROXY_IP",
@@ -330,7 +333,7 @@ configD_decode() {
  "kv_role":"kv_consumer",
  "kv_rank":1,
  "kv_parallel_size":1,
- "kv_buffer_size":"1e9",
+ "kv_buffer_size":"2e9",
  "kv_port":"14700",
  "kv_connector_extra_config":{
    "proxy_ip":"$PROXY_IP",
