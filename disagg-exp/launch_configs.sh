@@ -250,8 +250,9 @@ configD_prefill() {
     export PYTHONFAULTHANDLER=1
 
     # ─ Level 1: NCCL detailed logging ──────────────────────────────────────
-    export NCCL_DEBUG=TRACE
-    export NCCL_DEBUG_SUBSYS=INIT,COLL,P2P,ENV
+    # NCCL 디버그가 필요할 때만 호출 측에서 export NCCL_DEBUG=TRACE 등으로 설정.
+    # export NCCL_DEBUG=TRACE
+    # export NCCL_DEBUG_SUBSYS=INIT,COLL,P2P,ENV
 
     # ─ Level 2: System call tracing (strace) ───────────────────────────────
     # Uncomment to enable strace output to file
@@ -310,8 +311,9 @@ configD_decode() {
     export PYTHONFAULTHANDLER=1
 
     # ─ Level 1: NCCL detailed logging ──────────────────────────────────────
-    export NCCL_DEBUG=TRACE
-    export NCCL_DEBUG_SUBSYS=INIT,COLL,P2P,ENV
+    # NCCL 디버그가 필요할 때만 호출 측에서 export NCCL_DEBUG=TRACE 등으로 설정.
+    # export NCCL_DEBUG=TRACE
+    # export NCCL_DEBUG_SUBSYS=INIT,COLL,P2P,ENV
 
     # ─ Level 2: System call tracing (strace) ───────────────────────────────
     # Uncomment to enable strace output to file
