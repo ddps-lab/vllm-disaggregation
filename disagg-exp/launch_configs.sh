@@ -298,7 +298,14 @@ JSON
 
 # 여기 Prefill ip넣어야함
 configD_decode() {
-    echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP"
+    # PROXY_IP는 prefill/proxy 노드의 private IP여야 한다.
+    # 상단 default가 VLLM_HOST_IP로 fallback되므로 자기 자신과 같으면 미설정으로 간주.
+    if [[ -z "${PROXY_IP:-}" || "$PROXY_IP" == "$VLLM_HOST_IP" || "$PROXY_IP" == "127.0.0.1" ]]; then
+        echo "ERROR: Set PROXY_IP=<prefill-or-proxy-node-private-ip> before running configD decode"
+        echo "       (PROXY_IP must point to the prefill/proxy node, not this decode node)"
+        exit 1
+    fi
+    echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP, proxy=$PROXY_IP"
 
     export PYTHONFAULTHANDLER=1
 
