@@ -79,9 +79,9 @@ COMMON_FLAGS=(
     # (Fix: T4 GPU 호환성을 위해 bfloat16 대신 half 강제 적용)
     --dtype half
     --max-num-seqs "${MAX_NUM_SEQS:-512}"
-    # AWQ INT4 weights + FP8 KV cache (g6.xlarge throughput 극대화)
+    # AWQ INT4 weights (FP8 KV cache는 disagg P2pNcclConnector 호환성 검증 필요해서 우선 끔)
     --quantization awq
-    --kv-cache-dtype fp8
+    # --kv-cache-dtype fp8
 )
 
 # Optional: enforce-eager fallback. CUDA Graph capture can clash with the
