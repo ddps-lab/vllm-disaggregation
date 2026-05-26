@@ -166,6 +166,10 @@ def run_one(
         "--burstiness", "1.0",               # Poisson
         "--ignore-eos",
         "--seed", "0",
+        # Greedy + 모델 generation_config.json (temp=0.6, top_p=0.9) override.
+        # 벤치마크는 deterministic 해야 비교가 의미 있으므로 temperature=0 강제.
+        # top_p=1.0 은 temperature=0 일 때 효과 없지만 메타로 박아둠.
+        "--extra-body", json.dumps({"temperature": 0, "top_p": 1.0}),
         "--percentile-metrics", "ttft,tpot,itl,e2el",
         "--metric-percentiles", "50,90,99",
         "--save-result",
