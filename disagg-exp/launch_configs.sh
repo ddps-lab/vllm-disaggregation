@@ -43,7 +43,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROXY_SCRIPT="$REPO_ROOT/benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py"
 
-MODEL="${MODEL:-hugging-quants/Meta-Llama-3.1-8B-Instruct-AWQ-INT4}"
+MODEL="${MODEL:-Qwen/Qwen2.5-3B-Instruct}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.82}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
@@ -77,16 +77,13 @@ fi
 # Per the experiment design's noise-control list.
 COMMON_FLAGS=(
     --model "$MODEL"
-    --served-model-name llama-3.1-8b
+    --served-model-name qwen2.5-3b
     --max-model-len "$MAX_MODEL_LEN"
     --gpu-memory-utilization "$GPU_MEM_UTIL"
     --no-enable-prefix-caching
     # (Fix: T4 GPU 호환성을 위해 bfloat16 대신 half 강제 적용)
     --dtype half
     --max-num-seqs "${MAX_NUM_SEQS:-512}"
-    # AWQ INT4 weights (FP8 KV cache는 disagg P2pNcclConnector 호환성 검증 필요해서 우선 끔)
-    --quantization awq
-    # --kv-cache-dtype fp8
 )
 
 # Optional: enforce-eager fallback. CUDA Graph capture can clash with the

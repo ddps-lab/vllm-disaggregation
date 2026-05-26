@@ -11,7 +11,7 @@ Usage:
 Env overrides (same names as sweep.py):
     # Note: PREFILL_LENS and DECODE_LENS combinations are now restricted to
     # exactly 3 defined pairs to prevent combinatorial explosion:
-    # (2048, 128), (1024, 512), (128, 2048)
+    # (2048, 64), (512, 512), (128, 1024)
     SWEEP_RATES=1.0,2.0,4.0
     SWEEP_NUM_PROMPTS=300         total prompts per point (warmup 10 + measured 290)
     EXP_LOG_DIR=./results
@@ -49,9 +49,9 @@ def _parse_list(env_key: str, default: list[float]) -> list[float]:
     return default
 
 PD_PAIRS = [
-    (2048, 128),
-    (1024, 512),
-    (128, 2048),
+    (2048, 64),
+    (512, 512),
+    (128, 1024),
 ]
 RATES = _parse_list("SWEEP_RATES", [1.0, 2.0, 4.0])
 
@@ -59,28 +59,15 @@ NUM_PROMPTS = int(os.environ.get("SWEEP_NUM_PROMPTS", "300"))
 WARMUP_N    = int(os.environ.get("SWEEP_WARMUP_N",   "10"))   # not enforced server-side; analyze can skip
 
 LOG_DIR = os.environ.get("EXP_LOG_DIR", "./results")
-MODEL_NAME = "llama-3.1-8b"  # must match --served-model-name on the server
 
-
-def _require_env(name: str) -> str:
-    """Read a required env var. Fail loud if unset/empty.
-
-    Why this is strict: these values get stamped into every result JSON's
-    metadata. Silently falling back to a default would record incorrect
-    `model_path` / `quantization` / `dtype` when the operator forgot to
-    export them, making comparisons across sweep runs unreliable.
-    """
-    val = os.environ.get(name, "").strip()
-    if not val:
-        print(
-            f"ERROR: required env var {name} is not set.\n"
-            f"  These values are recorded in every result JSON to identify\n"
-            f"  the model/quantization/dtype used for the run.\n"
-            f"  Example: export {name}=...   then re-run.",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-    return val
+# ── model identity ────────────────────────────────────────────────────────────
+# Single source of truth for the model under test. Must be kept in sync with
+# launch_configs.sh on the server side. Edit this block (not env vars) when
+# switching models. These values are stamped into every result JSON's
+# metadata so analyze_official.py / S3 archive can identify the run later.
+MODEL_NAME = "qwen2.5-3b"                       # = --served-model-name on server
+MODEL_PATH = "Qwen/Qwen2.5-3B-Instruct"         # HF id, used as bench --tokenizer
+MODEL_DTYPE = "half"                            # half | bfloat16 | float16
 
 
 # ── S3 sync (best-effort, optional) ──────────────────────────────────────────
@@ -303,9 +290,6 @@ def run_one(
     result_dir: Path,
     point_id: str,
     extra_body_min: bool,
-    model_path: str,
-    model_quantization: str,
-    model_dtype: str,
     prefill_metrics_url: str = "",
     decode_metrics_url: str = "",
     metrics_interval: float = 1.0,
@@ -323,7 +307,7 @@ def run_one(
         "--base-url", base_url,
         "--endpoint", "/v1/completions",
         "--model", MODEL_NAME,
-        "--tokenizer", "meta-llama/Llama-3.1-8B-Instruct",
+        "--tokenizer", MODEL_PATH,
         "--dataset-name", "random",
         "--random-input-len", str(prefill_len),
         "--random-output-len", str(decode_len),
@@ -350,12 +334,10 @@ def run_one(
         f"decode_len={decode_len}",
         f"rate={rate}",
         f"point_id={point_id}",
-        # 실제 model path + quantization 흔적. vllm bench serve의 model_id는
-        # served-model-name(=llama-3.1-8b)만 박혀서 양자화 변형을 구분 못 함.
-        # 이 세 값은 main()에서 _require_env로 검증되어 silent default가 없음.
-        f"model_path={model_path}",
-        f"quantization={model_quantization}",
-        f"dtype={model_dtype}",
+        # 실제 model path + dtype. vllm bench serve의 model_id는
+        # served-model-name(MODEL_NAME) 만 박혀서 dtype 변형을 구분 못 함.
+        f"model_path={MODEL_PATH}",
+        f"dtype={MODEL_DTYPE}",
     ]
 
     # Force exact output length: ask the server to keep generating to decode_len.
@@ -471,13 +453,11 @@ async def main(args: argparse.Namespace) -> None:
     out_dir = Path(LOG_DIR) / config
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Validate model identity env vars BEFORE anything heavy starts. These are
-    # required so every result JSON's metadata records exactly what was tested.
-    model_path = _require_env("MODEL")
-    model_quantization = _require_env("MODEL_QUANTIZATION")
-    model_dtype = _require_env("MODEL_DTYPE")
+    # Model identity is hardcoded at the top of this file (single source of
+    # truth). Print it here so the operator can sanity-check it matches what
+    # launch_configs.sh is actually serving.
     print(
-        f"[sweep] model_path={model_path} quantization={model_quantization} dtype={model_dtype}",
+        f"[sweep] served_name={MODEL_NAME} model_path={MODEL_PATH} dtype={MODEL_DTYPE}",
         flush=True,
     )
 
@@ -522,9 +502,6 @@ async def main(args: argparse.Namespace) -> None:
                 result_dir=out_dir,
                 point_id=point_id,
                 extra_body_min=not args.no_min_tokens,
-                model_path=model_path,
-                model_quantization=model_quantization,
-                model_dtype=model_dtype,
                 prefill_metrics_url=args.prefill_metrics_url,
                 decode_metrics_url=args.decode_metrics_url,
                 metrics_interval=args.metrics_interval,
