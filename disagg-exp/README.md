@@ -4,7 +4,11 @@
 > 커스텀 connector / 커스텀 클라이언트 / 커스텀 분석 모두 제거. 위험 surface 최소화.
 
 vLLM fork (`releases/v0.21.0`) 기반의 prefill/decode disaggregation 비용대비가치 평가.
-모델 `meta-llama/Llama-3.1-8B-Instruct` (BF16, ~16GB), 리전 us-west-2.
+모델 `Qwen/Qwen2.5-3B-Instruct` (FP16 / `--dtype half`, weights ~6GB, 양자화 미사용), 리전 us-west-2.
+
+> **모델 변경 이력 (2026-05)**: 기존 `meta-llama/Llama-3.1-8B-Instruct-AWQ-INT4` → `Qwen/Qwen2.5-3B-Instruct`.
+> 양자화 dequant 오버헤드/노이즈 제거, T4(16GB)/L4(24GB) 모두 native FP16 동작,
+> Llama-3.2-3B 와 함께 3B 급 표준 베이스라인이라 분석 비교 용이.
 
 > **핵심 질문**: 같은 예산이면 큰 GPU 한 장이 나은가, 작은 GPU 여러 장 + PD 분리가 나은가?
 >
@@ -43,7 +47,8 @@ LLM 추론은 두 단계로 나뉜다:
 
 - **TP=N**: 한 레이어를 N개 GPU가 분담 (행렬 곱을 행/열로 자름). 통신 빈도 ↑, latency ↓.
 - **PP=N**: 레이어를 N개 GPU에 순차 배치. 통신 빈도 ↓, throughput ↑.
-- 8B 모델은 T4 16GB 단독에 안 올라가서 **TP ≥ 2 또는 PP ≥ 2** 필수.
+- 3B FP16 (~6GB) 은 T4 16GB / L4 24GB 단독 모두 가능. TP/PP 비교는 모델 size
+  제약이 아니라 "여러 GPU 활용 vs 단일 GPU" 자체를 측정하는 게 목적.
 
 ### 2.3 P2pNcclConnector — 어떻게 작동하나
 
@@ -54,13 +59,27 @@ LLM 추론은 두 단계로 나뉜다:
 3. **버퍼**: `TensorMemoryPool`이 pinned **host RAM** 위에 풀 잡음 (기본 32GB). cross-node는 GPU↔host↔NIC로 흐름.
 4. **NCCL transport 자동 선택**: NVLink → PCIe P2P → SHM → IB → TCP sockets. AWS는 보통 **PCIe/SHM** (same-node) 또는 **TCP** (cross-node)로 떨어짐.
 
+> ⚠️ **알아둬야 할 vLLM v1 버그 — `VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1` 필수**
+>
+> P2pNcclConnector 는 KV tensor 를 `request_id + "#" + layer_name` 키로 식별합니다.
+> 그런데 vLLM v1 의 [input_processor.py:assign_request_id](../vllm/v1/engine/input_processor.py)
+> 가 외부 request_id 에 **8자리 random hex** 를 붙입니다. 이게 Prefill / Decode
+> 각 인스턴스에서 **독립적으로** 호출되어서 같은 외부 요청에 서로 다른 hash 가 생성됨
+> → tensor_id 불일치 → Decode 가 `recv_tensor()` 에서 영원히 hang.
+>
+> Proxy 가 이미 uuid 로 unique request_id 를 만들어주니까 randomization 불필요.
+> `launch_configs.sh` 가 양쪽 노드에 `VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1` 자동 export.
+
 ### 2.4 변인 통제 및 결과 오염 방지 (Anti-Contamination)
 
 1. **캐시 오염 방지 (`--no-enable-prefix-caching`)** — 같은 프롬프트 재사용 방지. 모든 요청이 정직하게 전체 prefill + KV 전송.
 2. **`PYTHONHASHSEED=123`** — cross-node에서 직렬화 순서 동기화.
-3. **`--no-enable-chunked-prefill` (prefill role만)** — 한 번에 prefill해서 compute bound 측정. PD에서는 chunked prefill이 KV transfer와 충돌할 수 있어 끄는 게 안전.
-4. **CUDA Graph ON** — `--enforce-eager` 안 씀. 성능 왜곡 방지. **단** P2pNccl과 충돌 시 `ENFORCE_EAGER=1` env로 fallback.
+3. **`--no-enable-chunked-prefill` (Prefill + Decode 양쪽)** — Prefill 은 한 번에 prefill 해서 compute bound 측정. Decode 는 disagg 에서 실제로 prefill 안 하기 때문에 chunked prefill 옵션이 무의미 → 설정 비대칭 제거 목적으로 양쪽 모두 OFF.
+4. **CUDA Graph OFF (기본 `--enforce-eager`)** — P2pNcclConnector send/recv 와 graph capture 의 상호작용 가능성 제거. xpyd 업스트림 예제도 enforce-eager 사용. 필요 시 `ENFORCE_EAGER=0` env 로 graph 재활성화 가능.
 5. **`--max-num-seqs 512`** — 배치 제한을 풀어서 throughput 최대.
+6. **양자화 미사용** — 3B FP16 weights 가 T4/L4 모두에 native 로 들어가서 AWQ 등 dequant 단계 불필요. 양자화 노이즈 제거.
+7. **Greedy decoding 강제 (`temperature=0`, `top_p=1.0`)** — `vllm bench serve` 가 `--extra-body` 로 전달. 모델 `generation_config.json` 의 `temperature=0.7` 등 기본값을 override 해서 deterministic / reproducible 결과 보장.
+8. **`VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1`** — P2pNcclConnector 의 tensor_id 일치를 위해 필수. 자세한 내용은 §2.3 의 warning 참고.
 
 > ⚠️ **WARNING — `MAX_NUM_SEQS=512` & P2pNccl consumer buffer**
 >
@@ -150,12 +169,21 @@ PID 파일: `$EXP_LOG_DIR/.pid_{nvidia_dmon,ifstat,dcgm_loop}` → 재실행 시
 
 공통 flag (`COMMON_FLAGS`):
 ```
---no-enable-prefix-caching --dtype half --served-model-name llama-3.1-8b
+--no-enable-prefix-caching --dtype half --served-model-name qwen2.5-3b
 --max-model-len $MAX_MODEL_LEN --gpu-memory-utilization $GPU_MEM_UTIL
 --max-num-seqs ${MAX_NUM_SEQS:-512}
 ```
-CUDA Graph **ON** (enforce-eager 안 씀, `ENFORCE_EAGER=1` env로 override).
-(T4 GPU와의 호환성 문제로 `--dtype half` 로 강제 고정되었습니다.)
+**CUDA Graph OFF (기본)** — `--enforce-eager` 자동 추가. P2pNccl 안정성을 위해
+기본 OFF, `ENFORCE_EAGER=0 bash launch_configs.sh ...` 로 재활성화 가능.
+**`--dtype half` 강제** — T4 GPU 가 BF16 미지원이라 동일 launch script 로
+T4/L4 모두 돌리기 위해 FP16 으로 고정. 양자화는 사용하지 않음.
+
+`launch_configs.sh` 가 시작 시 export 하는 env:
+```
+PYTHONHASHSEED=123                          # cross-node 직렬화 결정성
+VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1     # tensor_id 일치 (§2.3 참고)
+NCCL_IB_DISABLE=1, NCCL_SOCKET_IFNAME=...   # NCCL transport 강제
+```
 
 **Port plan**:
 - Prefill HTTP: 8100, kv_port: 14600 (+rank)
@@ -169,22 +197,76 @@ CUDA Graph **ON** (enforce-eager 안 씀, `ENFORCE_EAGER=1` env로 override).
 ```
 vllm bench serve \
   --backend openai --base-url <url> \
-  --endpoint /v1/completions --model llama-3.1-8b \
+  --endpoint /v1/completions --model qwen2.5-3b \
+  --tokenizer Qwen/Qwen2.5-3B-Instruct \
   --dataset-name random --random-input-len $PL --random-output-len $DL \
   --random-range-ratio 0.0 \
-  --num-prompts 350 --request-rate $RATE --burstiness 1.0 \
+  --num-prompts 300 --request-rate $RATE --burstiness 1.0 \
   --ignore-eos --seed 0 \
+  --extra-body '{"temperature": 0, "top_p": 1.0}' \
   --percentile-metrics ttft,tpot,itl,e2el --metric-percentiles 50,90,99 \
   --save-result --save-detailed \
   --result-dir $EXP_LOG_DIR/<config>/ \
   --result-filename p{prefill}_d{decode}_r{rate}.json \
-  --disable-tqdm
+  --metadata config=<C> prefill_len=<PL> decode_len=<DL> rate=<R> point_id=<id> \
+              model_path=Qwen/Qwen2.5-3B-Instruct dtype=half
 ```
 *(주의: Proxy의 `max_tokens=1` 정책 충돌 우회 및 400 Bad Request 에러를 방지하기 위해 payload에서 `min_tokens` 주입을 제거하였습니다. 또한, Proxy 서버에 `/health` 엔드포인트가 없는 점을 고려하여 404/405 응답도 서버 활성화로 간주하도록 헬스체크가 수정되었습니다.)*
 
+`--metadata` 에 `model_path`, `dtype` 을 박아 vllm bench serve 의 `model_id`
+(=served-model-name) 가 구분 못 하는 양자화/dtype 변형까지 결과 JSON 에 기록.
+이 값들은 `sweep_official.py` 상단의 `MODEL_NAME` / `MODEL_PATH` / `MODEL_DTYPE`
+**모듈 상수** 가 단일 진실원 (env 의존 X).
+
 Resume: `.done_<point>` / `.failed_<point>` 마커. S3 sync 백그라운드 (`raw/official/{date}/{host}/{config}/`).
 
-### 4.4 `analyze_official.py`
+### 4.4 `sweep_official.py` — per-side `/metrics` 스크래퍼
+
+`vllm bench serve` 의 결과 JSON 은 **proxy 가 본 end-to-end** (`request_throughput`,
+`output_throughput`, TTFT/TPOT/ITL/E2EL) 만 제공합니다. Disaggregated setup 에서는
+"Prefill 노드 / Decode 노드 각각이 무슨 일을 했는지" 가 안 보임.
+
+이를 보완하기 위해 sweep 이 각 point 가 도는 동안 **양쪽 vLLM 인스턴스의
+Prometheus `/metrics` 엔드포인트** 를 1초 주기로 polling 합니다.
+
+**캡쳐 metric**:
+
+| 종류 | metric | 의미 |
+|---|---|---|
+| Gauge | `vllm:num_requests_running` | 현재 처리 중인 요청 수 (= 배치 크기) |
+| Gauge | `vllm:num_requests_waiting` | 큐 대기 중인 요청 수 |
+| Gauge | `vllm:kv_cache_usage_perc` | GPU KV cache 사용률 |
+| Counter | `vllm:prompt_tokens_total` | 누적 prompt 토큰 |
+| Counter | `vllm:generation_tokens_total` | 누적 생성 토큰 |
+| Counter | `vllm:request_success_total` | 누적 성공 요청 수 |
+
+**Rate 계산 원리**: Counter 는 monotonic 누적값이므로 active 구간
+(prefill+decode `running > 0`) 의 첫·마지막 sample 차분을 duration 으로 나눠
+per-second rate 산출. 두 노드의 `/metrics` 가 독립이라 **자동으로 per-side**
+RPS / prefill_TPS / decode_TPS 가 분리되어 나옴.
+
+**출력 파일 (per point, S3 자동 sync)**:
+- `{point}.metrics.csv` — 1초 sampling 시계열 raw (prefill + decode 컬럼 분리)
+- `{point}.metrics.json` — summary. `_derived` 키에 `prefill_rps`, `prefill_prompt_tps`, `decode_rps`, `decode_generation_tps` 정리
+
+**stdout 출력** (매 point 끝날 때):
+```
+[1/9] p2048_d64_r1.0
+  completed=300 rps=0.97 tok/s=62.4 ttft_p50_ms=85.10 ...                    ← end-to-end
+  thru  — prefill rps=0.97 prompt_tps=1985.40 | decode rps=0.97 gen_tps=62.32 ← per-side
+  batch — prefill mean=1.8 p99=4.0 max=5 | decode mean=8.2 p99=14.0 max=15
+```
+
+**CLI 옵션**:
+```
+--prefill-metrics-url   default: http://127.0.0.1:8100/metrics
+--decode-metrics-url    default: ""  (빈 값 → decode 측 스크래핑 비활성화)
+--metrics-interval      default: 1.0 (초)
+```
+Cross-node config D 의 경우 sweep 이 Prefill 노드에서 도는 가정하에
+`--decode-metrics-url http://<decode-private-ip>:8200/metrics` 를 반드시 전달.
+
+### 4.5 `analyze_official.py`
 
 `{EXP_LOG_DIR}/{config}/p*_d*_r*.json`을 읽어 표 + matplotlib plot 출력.
 
@@ -246,11 +328,15 @@ P2pNcclConnector의 `TensorMemoryPool`은 **pinned host RAM**에 풀 잡음. 기
 
 ### CUDA Graph + P2pNccl
 
-공식 xpyd 예제는 `--enforce-eager`를 명시함. 기본 `disaggregated_prefill.sh`는 안 씀.
-spec 준수로 **기본 ON 유지**. 검증 단계에서 KV transfer 실패하거나 hang 발생 시:
+공식 xpyd 예제가 `--enforce-eager` 를 명시하고, P2pNcclConnector send/recv 와
+graph capture 의 상호작용 가능성 우려가 있어 **기본 OFF (`--enforce-eager` ON)** 으로 운영.
+`launch_configs.sh` 의 `ENFORCE_EAGER` 기본값이 1 이라 그냥 `bash launch_configs.sh ...`
+하면 자동 적용. CUDA Graph 캡처 재활성화는:
 ```bash
-ENFORCE_EAGER=1 bash launch_configs.sh configC1 prefill
+ENFORCE_EAGER=0 bash launch_configs.sh configC1 prefill
 ```
+페널티는 per-step kernel launch overhead 만큼 (~5~15%) 이지만 양쪽 노드 동일하게
+적용되므로 P/D split 비교 자체에는 영향 X.
 
 ---
 
@@ -310,6 +396,7 @@ python disagg-exp/sweep_official.py --config C1 --base-url http://localhost:8000
 **Decode node:**
 ```bash
 export VLLM_HOST_IP=10.0.x.y       # 이 노드의 private IP
+export PROXY_IP=10.0.x.z           # ← prefill/proxy 노드의 private IP (필수, self-IP fallback 방지)
 export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5     # 실제 NIC 이름으로
 bash disagg-exp/launch_configs.sh configD decode
@@ -326,9 +413,20 @@ bash disagg-exp/launch_configs.sh configD prefill
 
 **Prefill node (또 다른 터미널, 둘 다 ready 후):**
 ```bash
+# Proxy 띄우기
 bash disagg-exp/launch_configs.sh configD proxy
-python disagg-exp/sweep_official.py --config D --base-url http://localhost:8000
+
+# Sweep — Decode 노드의 /metrics URL 을 반드시 전달 (per-side 측정용)
+.venv/bin/python disagg-exp/sweep_official.py \
+  --config D \
+  --base-url http://127.0.0.1:8000 \
+  --decode-metrics-url http://10.0.x.y:8200/metrics
 ```
+
+> ⚠️ `--decode-metrics-url` 을 안 주면 `{point}.metrics.json` 의 `_derived.decode_rps`,
+> `_derived.decode_generation_tps` 가 **null** 로 떨어집니다. 사전 검증:
+> `curl -s http://10.0.x.y:8200/metrics | grep -E "^vllm:num_requests_running"` 가
+> 라인을 반환해야 함 (안 나오면 AWS SG 에 8200/tcp 인바운드 필요).
 
 ### 7.5 첫 검증 단계 권장 사항
 
@@ -377,14 +475,16 @@ python disagg-exp/analyze_official.py --log-dir ./data --configs C1 D \
 ```
 $EXP_LOG_DIR/
 ├── <config>/
-│   ├── p512_d512_r1.0.json       # vllm bench serve 결과 (rich)
-│   ├── p512_d512_r1.0.log        # subprocess stdout/stderr
-│   ├── .done_p512_d512_r1.0      # resume 마커
-│   └── .failed_p..._r4.0         # 실패 마커 (지우면 retry)
-├── nvidia_smi.csv                # 1Hz
-├── ifstat.csv                    # 1Hz
-├── dcgm.log                      # 2s
-├── clock_baseline_<host>.txt     # chrony snapshot
+│   ├── p2048_d64_r1.0.json          # vllm bench serve 결과 (end-to-end metrics)
+│   ├── p2048_d64_r1.0.log           # subprocess stdout/stderr
+│   ├── p2048_d64_r1.0.metrics.csv   # /metrics scraper 시계열 (1Hz, prefill+decode 컬럼 분리)
+│   ├── p2048_d64_r1.0.metrics.json  # per-side summary (_derived 에 RPS/TPS, gauge 통계)
+│   ├── .done_p2048_d64_r1.0         # resume 마커
+│   └── .failed_p..._r4.0            # 실패 마커 (지우면 retry)
+├── nvidia_smi.csv                   # 1Hz
+├── ifstat.csv                       # 1Hz
+├── dcgm.log                         # 2s
+├── clock_baseline_<host>.txt        # chrony snapshot
 ├── vllm_configC1_{prefill,decode}_<host>.log
 ├── pd_proxy_<host>.log
 └── .pid_{nvidia_dmon,ifstat,dcgm_loop}
@@ -404,3 +504,24 @@ S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{YYYYMMDD}/{host
 - **Decode (수신)**: `대기 시간 포함 전체 Recv 시간: OOO.OO ms`
 
 결과 폴더 내의 `prefill_stdout.log` 및 `decode_stdout.log`를 통해 요청당 오버헤드 병목 현상을 정확히 파악할 수 있습니다.
+
+---
+
+## 11. 변경 이력 (최근 작업)
+
+| 커밋 | 내용 |
+|---|---|
+| `0f7eb19ab` | **CUDA Graph 기본 비활성화** — P2pNcclConnector 안정성 우선. `ENFORCE_EAGER` 기본 1 |
+| `3c698c672` | **sweep 메트릭에 per-side RPS/TPS 추가** — `/metrics` scraper 도입. `{point}.metrics.csv` / `{point}.metrics.json` 자동 생성. `vllm:gpu_cache_usage_perc` → `vllm:kv_cache_usage_perc` 버그 fix |
+| `054d1ee70` | **모델을 Qwen2.5-3B-Instruct 로 변경** — 양자화(AWQ) 제거. `MODEL_NAME` / `MODEL_PATH` / `MODEL_DTYPE` 를 sweep_official.py 모듈 상수로 통합. PD_PAIRS: `(2048,128)/(1024,512)/(128,2048)` → `(2048,64)/(512,512)/(128,1024)` |
+| `bb6f24166` | 결과 JSON metadata 에 `model_path`/`dtype` 추가. `RATES` 그리드 변경 |
+| `10c093308` | **Decode hang 해결** (request_id randomization 버그). `--extra-body '{"temperature": 0}'` 로 greedy decoding 강제 |
+| `18224a753` | `VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1` 자동 export 추가 |
+| `90b5cfe2a` | configD decode 가 self-IP 로 fallback 하던 문제 → `PROXY_IP` 명시 강제 |
+
+### 알려진 함정 (debugging 시 우선 확인)
+
+1. **Decode 가 첫 요청에서 영원히 hang** → §2.3 의 `VLLM_DISABLE_REQUEST_ID_RANDOMIZATION` warning 참고. `launch_configs.sh` 가 자동 export 하지만 직접 띄울 때는 명시 필요.
+2. **`{point}.metrics.json` 의 `decode_rps`/`decode_generation_tps` 가 `null`** → sweep 돌릴 때 `--decode-metrics-url` 누락. §7.4 참고.
+3. **NCCL handshake 후 hang** → CUDA Graph 잔재. `ENFORCE_EAGER=1` (기본값) 확실히 들어갔는지 vllm 로그 첫 줄에서 `enforce_eager=True` 확인.
+4. **결과 JSON 의 `model_id="qwen2.5-3b"` 만 보고 모델 식별 어려움** → metadata 의 `model_path`, `dtype` 같이 확인.
