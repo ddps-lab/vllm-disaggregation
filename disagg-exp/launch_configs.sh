@@ -24,7 +24,7 @@
 #   MAX_MODEL_LEN         default: 4096
 #   GPU_MEM_UTIL          default: 0.85
 #   MAX_NUM_SEQS          default: 512   (vLLM stock default is 128; raised for this experiment)
-#   ENFORCE_EAGER         default: 0     (1 → add --enforce-eager; turn on if CUDA Graph + P2pNccl misbehaves)
+#   ENFORCE_EAGER         default: 1     (0 → CUDA Graph capture 재활성화; P2pNccl 안정성을 위해 기본 OFF)
 #   EXP_LOG_DIR           default: ./results
 #   VLLM_HOST_IP          default: 127.0.0.1 (set to the node's private IP for cross-node)
 #   PROXY_PORT            default: 30001 (ZMQ control channel for P2pNccl)
@@ -86,11 +86,10 @@ COMMON_FLAGS=(
     --max-num-seqs "${MAX_NUM_SEQS:-512}"
 )
 
-# Optional: enforce-eager fallback. CUDA Graph capture can clash with the
-# P2pNcclConnector send/recv path; the xpyd upstream example uses --enforce-eager
-# as a safety net. We follow the experiment spec (CUDA Graph ON by default) and
-# expose an env knob so the operator can flip it without editing the script.
-if [[ "${ENFORCE_EAGER:-0}" == "1" ]]; then
+# CUDA Graph 비활성화. xpyd 업스트림 예제도 그렇고 P2pNcclConnector send/recv
+# 경로와 graph capture 사이에 상호작용 가능성이 있어 기본 OFF 로 운영.
+# 필요 시 `ENFORCE_EAGER=0 bash launch_configs.sh ...` 로 graph 캡처 재활성화.
+if [[ "${ENFORCE_EAGER:-1}" == "1" ]]; then
     COMMON_FLAGS+=( --enforce-eager )
 fi
 
