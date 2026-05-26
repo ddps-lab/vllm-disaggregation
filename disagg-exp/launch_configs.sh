@@ -48,6 +48,11 @@ MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.82}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
 export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
+# P2pNcclConnector keys KV tensors by request_id; vLLM v1 입력 프로세서가 외부
+# request_id에 8자리 random hex를 붙이기 때문에 (input_processor.py:232) Prefill과
+# Decode가 서로 다른 tensor_id를 보고 hang이 발생한다. proxy가 이미 uuid로 unique
+# request_id를 만들어주므로 randomization을 끄는 게 안전하다.
+export VLLM_DISABLE_REQUEST_ID_RANDOMIZATION="${VLLM_DISABLE_REQUEST_ID_RANDOMIZATION:-1}"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-127.0.0.1}"
 # (Fix: Config D cross-node proxy 통신을 위해 PROXY_IP 추가 연동)
 export PROXY_IP="${PROXY_IP:-$VLLM_HOST_IP}"
