@@ -118,22 +118,36 @@ def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Eve
 # ── /metrics scraping ─────────────────────────────────────────────────────────
 # Prometheus exposition format: lines look like
 #   vllm:num_requests_running{model_name="..."} 12.0
-# Untagged lines (no `{...}`) and `# HELP/# TYPE` lines are ignored.
+# Some metrics (e.g. request_success) have multiple label combinations and emit
+# one line per combination; for those we sum across all labels to get the
+# instance-wide total.
 _METRIC_RE = re.compile(r"^(vllm:[a-z_]+)\{[^}]*\}\s+([0-9eE+\-.]+)\s*$")
 
-# Metrics we care about for batch-size analysis.
-_METRIC_KEYS = (
+# Gauges: instantaneous state. Stored raw per sample.
+_GAUGE_KEYS = (
     "vllm:num_requests_running",
     "vllm:num_requests_waiting",
-    "vllm:gpu_cache_usage_perc",
+    "vllm:kv_cache_usage_perc",
 )
+
+# Counters: monotonic cumulative. Prometheus python client appends `_total` to
+# Counter metrics on export. Stored raw per sample, then differenced in
+# summary() to derive per-second rates.
+_COUNTER_KEYS = (
+    "vllm:prompt_tokens_total",       # tokens entering as prompt
+    "vllm:generation_tokens_total",   # tokens emitted as completion
+    "vllm:request_success_total",     # requests completed successfully
+)
+
+_METRIC_KEYS = _GAUGE_KEYS + _COUNTER_KEYS
 
 
 def _scrape_once(url: str, timeout: float = 2.0) -> dict[str, float]:
     """Pull /metrics text and parse out the vllm:* values we care about.
 
-    Returns empty dict on any error so the scrape thread tolerates transient
-    network blips without dying.
+    Multiple lines for the same metric (different labels) are summed so the
+    returned value is instance-wide. Returns empty dict on any error so the
+    scrape thread tolerates transient network blips without dying.
     """
     try:
         with urlopen(url, timeout=timeout) as resp:
@@ -147,7 +161,7 @@ def _scrape_once(url: str, timeout: float = 2.0) -> dict[str, float]:
         m = _METRIC_RE.match(line)
         if m and m.group(1) in _METRIC_KEYS:
             try:
-                out[m.group(1)] = float(m.group(2))
+                out[m.group(1)] = out.get(m.group(1), 0.0) + float(m.group(2))
             except ValueError:
                 pass
     return out
@@ -209,8 +223,12 @@ class MetricsScraper(threading.Thread):
     def summary(self) -> dict:
         """Aggregate per-metric stats across samples.
 
-        Filters out samples where running==0 on both sides (warmup / cooldown)
-        so the mean reflects the actual serving period.
+        Gauges (running/waiting/kv_cache_usage) → mean/max/p50/p99 over the
+        active period (samples where at least one side had requests in flight).
+
+        Counters (prompt_tokens/generation_tokens/request_success) → rate
+        derived from (last_active - first_active) / active_duration. This
+        gives per-side RPS / prompt-TPS / generation-TPS for the run.
         """
         def _active(row: dict) -> bool:
             p = row.get("prefill.vllm:num_requests_running") or 0
@@ -236,14 +254,53 @@ class MetricsScraper(threading.Thread):
                 "samples": n,
             }
 
+        def _rate(key: str) -> dict | None:
+            # Counters are cumulative; rate = delta / duration over active samples.
+            pts = [
+                (s["t"], s[key])
+                for s in sample_set
+                if s.get(key) is not None and s.get("t") is not None
+            ]
+            if len(pts) < 2:
+                return None
+            t0, v0 = pts[0]
+            t1, v1 = pts[-1]
+            duration = t1 - t0
+            if duration <= 0:
+                return None
+            return {
+                "delta": v1 - v0,
+                "duration_s": duration,
+                "rate_per_s": (v1 - v0) / duration,
+            }
+
         out: dict[str, dict] = {}
         for side, url in (("prefill", self.prefill_url), ("decode", self.decode_url)):
             if not url:
                 continue
-            for k in _METRIC_KEYS:
+            for k in _GAUGE_KEYS:
                 s = _stats(f"{side}.{k}")
                 if s is not None:
                     out[f"{side}.{k}"] = s
+            for k in _COUNTER_KEYS:
+                r = _rate(f"{side}.{k}")
+                if r is not None:
+                    out[f"{side}.{k}"] = r
+
+        # Convenience fields for human-readable inline summary.
+        # Decode side request_success is the most useful RPS (proxy of completed
+        # end-user requests). prompt_tokens rate on Prefill = prefill TPS.
+        # generation_tokens rate on Decode = decode TPS.
+        def _get_rate(key: str) -> float | None:
+            r = out.get(key)
+            return r.get("rate_per_s") if isinstance(r, dict) and "rate_per_s" in r else None
+
+        out["_derived"] = {
+            "prefill_rps": _get_rate("prefill.vllm:request_success_total"),
+            "prefill_prompt_tps": _get_rate("prefill.vllm:prompt_tokens_total"),
+            "decode_rps": _get_rate("decode.vllm:request_success_total"),
+            "decode_generation_tps": _get_rate("decode.vllm:generation_tokens_total"),
+        }
         out["_meta"] = {
             "total_samples": len(self.samples),
             "active_samples": len(active),
@@ -516,16 +573,34 @@ async def main(args: argparse.Namespace) -> None:
                     try:
                         with open(metrics_path) as f:
                             mdata = json.load(f)
-                        parts = []
+                        # Line 1: per-side throughput (RPS + TPS).
+                        d = mdata.get("_derived") or {}
+                        def _fmt(v: float | None, unit: str) -> str:
+                            return f"{v:.2f}{unit}" if isinstance(v, (int, float)) else "n/a"
+                        tp_parts = []
+                        if d.get("prefill_rps") is not None or d.get("prefill_prompt_tps") is not None:
+                            tp_parts.append(
+                                f"prefill rps={_fmt(d.get('prefill_rps'), '')} "
+                                f"prompt_tps={_fmt(d.get('prefill_prompt_tps'), '')}"
+                            )
+                        if d.get("decode_rps") is not None or d.get("decode_generation_tps") is not None:
+                            tp_parts.append(
+                                f"decode rps={_fmt(d.get('decode_rps'), '')} "
+                                f"gen_tps={_fmt(d.get('decode_generation_tps'), '')}"
+                            )
+                        if tp_parts:
+                            print("  thru  — " + " | ".join(tp_parts), flush=True)
+                        # Line 2: per-side batch size (running requests gauge).
+                        batch_parts = []
                         for side in ("prefill", "decode"):
                             r = mdata.get(f"{side}.vllm:num_requests_running")
                             if r is not None:
-                                parts.append(
-                                    f"{side}_running mean={r['mean']:.1f} "
+                                batch_parts.append(
+                                    f"{side} mean={r['mean']:.1f} "
                                     f"p99={r['p99']:.1f} max={r['max']:.0f}"
                                 )
-                        if parts:
-                            print("  batch — " + " | ".join(parts), flush=True)
+                        if batch_parts:
+                            print("  batch — " + " | ".join(batch_parts), flush=True)
                     except Exception:
                         pass
                 n_done += 1
