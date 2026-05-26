@@ -19,7 +19,12 @@
 #   bash launch_configs.sh configD proxy      # launch disagg proxy
 #
 # Environment overrides (before calling this script):
-#   MODEL                 default: meta-llama/Llama-3.1-8B-Instruct
+#   MODEL                 default: Qwen/Qwen2.5-3B-Instruct
+#   SERVED_MODEL_NAME     default: qwen2.5-3b  (vllm `--served-model-name` 값; 폴더명에도 사용)
+#   RUN_TAG               default: $(date +%Y%m%d-%H%M)
+#                         실험 식별자. **분 단위까지** 자동 — 양쪽 노드 같은 분에 띄우면
+#                         같은 S3 폴더로 합쳐짐. 어긋나면 명시적으로 export RUN_TAG=...
+#   S3_BUCKET             default: hdjung-disaggregation-result  ("" → S3 sync 비활성화)
 #   DECODER_HOST          for D decode role — the private IP of the decode node
 #   MAX_MODEL_LEN         default: 4096
 #   GPU_MEM_UTIL          default: 0.85
@@ -29,6 +34,12 @@
 #   VLLM_HOST_IP          default: 127.0.0.1 (set to the node's private IP for cross-node)
 #   PROXY_PORT            default: 30001 (ZMQ control channel for P2pNccl)
 #   PYTHONHASHSEED        default: 123  (must match on prefill+decode)
+#
+# 출력 위치:
+#   로컬: $EXP_LOG_DIR/{CONFIG}-{SERVED_MODEL_NAME}/{system_logs,results}/
+#   S3 : s3://$S3_BUCKET/raw/official/$RUN_TAG/$VLLM_HOST_IP/{CONFIG}-{SERVED_MODEL_NAME}/
+#         ├── system_logs/  (nvidia_smi.csv, ifstat.csv, dcgm.log, clock_baseline_*.txt)
+#         └── results/      (vllm 서버 log, sweep 결과 JSON, .metrics.csv/json 등)
 #
 # AWS / NCCL notes:
 #   - g4dn / g6 / g6e have no NVLink and no InfiniBand. NCCL falls back to PCIe/SHM
@@ -44,6 +55,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROXY_SCRIPT="$REPO_ROOT/benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py"
 
 MODEL="${MODEL:-Qwen/Qwen2.5-3B-Instruct}"
+SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-qwen2.5-3b}"
+RUN_TAG="${RUN_TAG:-$(date +%Y%m%d-%H%M)}"
+S3_BUCKET="${S3_BUCKET:-hdjung-disaggregation-result}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
 GPU_MEM_UTIL="${GPU_MEM_UTIL:-0.82}"
 LOG_DIR="${EXP_LOG_DIR:-./results}"
@@ -73,11 +87,100 @@ if [[ -z "$CONFIG" ]]; then
     exit 1
 fi
 
+# ── per-experiment run directory ──────────────────────────────────────────────
+# 실험 단위로 분리된 로컬 폴더. S3 구조와 1:1 mirror 가 되도록 구성.
+#   $RUN_DIR/system_logs/  ← collector 출력 (nvidia_smi, ifstat, dcgm, chrony)
+#   $RUN_DIR/results/      ← vllm 서버 log, sweep 결과 JSON/CSV, proxy log
+RUN_DIR="$LOG_DIR/${CONFIG}-${SERVED_MODEL_NAME}"
+mkdir -p "$RUN_DIR/system_logs" "$RUN_DIR/results"
+
+echo "[launch] CONFIG=$CONFIG  ROLE=${ROLE:-<none>}  MODEL=$SERVED_MODEL_NAME  RUN_TAG=$RUN_TAG"
+echo "[launch] RUN_DIR=$RUN_DIR"
+if [[ -n "$S3_BUCKET" ]]; then
+    echo "[launch] S3 dest=s3://$S3_BUCKET/raw/official/$RUN_TAG/$VLLM_HOST_IP/${CONFIG}-${SERVED_MODEL_NAME}/"
+else
+    echo "[launch] S3 sync 비활성화 (S3_BUCKET=\"\")"
+fi
+
+# ── system collectors (per-experiment, kills any prior global ones) ──────────
+start_system_collectors() {
+    local sysdir="$RUN_DIR/system_logs"
+    mkdir -p "$sysdir"
+
+    # 이전 launch 의 collector 또는 setup.sh 의 글로벌 collector 정리.
+    pkill -f "nvidia-smi dmon" 2>/dev/null || true
+    pkill -f "ifstat -t" 2>/dev/null || true
+    for pf in "$LOG_DIR/.pid_dmon" "$LOG_DIR/.pid_ifstat" "$LOG_DIR/.pid_dcgm_loop" \
+              "$LOG_DIR/.pid_nvidia_dmon" \
+              "$RUN_DIR/.pid_dmon" "$RUN_DIR/.pid_ifstat" "$RUN_DIR/.pid_dcgm"; do
+        [[ -f "$pf" ]] && { kill "$(cat "$pf")" 2>/dev/null || true; rm -f "$pf"; }
+    done
+
+    # chrony 스냅샷 (snapshot, not daemon)
+    if command -v chronyc &>/dev/null; then
+        chronyc tracking > "$sysdir/clock_baseline_$(hostname).txt" 2>&1 || true
+    fi
+
+    # nvidia-smi dmon (1Hz)
+    if command -v nvidia-smi &>/dev/null; then
+        nohup nvidia-smi dmon -s pucvmet -d 1 -o DT > "$sysdir/nvidia_smi.csv" 2>&1 &
+        echo $! > "$RUN_DIR/.pid_dmon"
+    fi
+
+    # ifstat (1Hz)
+    if command -v ifstat &>/dev/null; then
+        local iface
+        iface=$(ip route get 1 2>/dev/null | awk '/dev/{print $5;exit}')
+        nohup ifstat -t -i "${iface:-eth0}" 1 > "$sysdir/ifstat.csv" 2>&1 &
+        echo $! > "$RUN_DIR/.pid_ifstat"
+    fi
+
+    # DCGM scrape loop (2s)
+    (while true; do
+        curl -sf "http://localhost:9400/metrics" \
+            | grep -E "DCGM_FI_DEV_(FB_USED|GPU_UTIL|SM_OCCUPANCY|POWER_USAGE|DRAM_ACTIVE|MEM_COPY_UTILIZATION)" \
+            >> "$sysdir/dcgm.log" 2>/dev/null
+        echo "---" >> "$sysdir/dcgm.log"
+        sleep 2
+    done) &
+    echo $! > "$RUN_DIR/.pid_dcgm"
+
+    echo "[launch] system collectors → $sysdir"
+}
+
+# ── background S3 sync ────────────────────────────────────────────────────────
+start_s3_sync_daemon() {
+    if [[ -z "$S3_BUCKET" ]]; then return; fi
+    if ! command -v s5cmd &>/dev/null; then
+        echo "[launch] WARN: s5cmd not found — S3 sync disabled"
+        return
+    fi
+    local dest="s3://$S3_BUCKET/raw/official/$RUN_TAG/$VLLM_HOST_IP/${CONFIG}-${SERVED_MODEL_NAME}/"
+    (
+        while true; do
+            s5cmd sync "$RUN_DIR/" "$dest" >/dev/null 2>&1 || true
+            sleep 30
+        done
+    ) &
+    echo $! > "$RUN_DIR/.pid_s3sync"
+    echo "[launch] S3 sync daemon pid=$(cat "$RUN_DIR/.pid_s3sync") → $dest"
+}
+
+# ── cleanup on exit ───────────────────────────────────────────────────────────
+cleanup_run_dir_pids() {
+    for pf in "$RUN_DIR"/.pid_*; do
+        [[ -f "$pf" ]] || continue
+        kill "$(cat "$pf")" 2>/dev/null || true
+        rm -f "$pf"
+    done
+}
+trap cleanup_run_dir_pids EXIT
+
 # ── common flags ──────────────────────────────────────────────────────────────
 # Per the experiment design's noise-control list.
 COMMON_FLAGS=(
     --model "$MODEL"
-    --served-model-name qwen2.5-3b
+    --served-model-name "$SERVED_MODEL_NAME"
     --max-model-len "$MAX_MODEL_LEN"
     --gpu-memory-utilization "$GPU_MEM_UTIL"
     --no-enable-prefix-caching
@@ -97,32 +200,38 @@ fi
 # Monolithic: no KV connector. P2pNccl is irrelevant here.
 configA1() {
     echo "[launch] configA1: monolithic 4×T4, TP=2 PP=2, port 8000"
+    start_system_collectors
+    start_s3_sync_daemon
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 2 \
         --pipeline-parallel-size 2 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_configA1_$(hostname).log"
+        2>&1 | tee "$RUN_DIR/results/vllm_configA1_$(hostname).log"
 }
 
 configA2() {
     echo "[launch] configA2: monolithic 4×T4, TP=4 PP=1, port 8000"
+    start_system_collectors
+    start_s3_sync_daemon
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 4 \
         --pipeline-parallel-size 1 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_configA2_$(hostname).log"
+        2>&1 | tee "$RUN_DIR/results/vllm_configA2_$(hostname).log"
 }
 
 configA3() {
     echo "[launch] configA3: monolithic 4×T4, TP=1 PP=4, port 8000"
+    start_system_collectors
+    start_s3_sync_daemon
     CUDA_VISIBLE_DEVICES=0,1,2,3 \
     vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 1 \
         --pipeline-parallel-size 4 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_configA3_$(hostname).log"
+        2>&1 | tee "$RUN_DIR/results/vllm_configA3_$(hostname).log"
 }
 
 configA() { configA1; }
@@ -130,11 +239,13 @@ configA() { configA1; }
 # ── Config B — monolithic 1×L40S ─────────────────────────────────────────────
 configB() {
     echo "[launch] configB: monolithic 1×L40S, port 8000"
+    start_system_collectors
+    start_s3_sync_daemon
     CUDA_VISIBLE_DEVICES=0 \
     vllm serve "${COMMON_FLAGS[@]}" \
         --tensor-parallel-size 1 \
         --port 8000 \
-        2>&1 | tee "$LOG_DIR/vllm_configB_$(hostname).log"
+        2>&1 | tee "$RUN_DIR/results/vllm_configB_$(hostname).log"
 }
 
 # ── Config C1 — same-node PD on 4× T4. P2pNcclConnector via PCIe/SHM ─────────
@@ -159,6 +270,8 @@ configB() {
 
 configC1_prefill() {
     echo "[launch] configC1 prefill: TP=2 PP=1 on GPU 0,1, port 8100"
+    start_system_collectors
+    start_s3_sync_daemon
     export NCCL_CUMEM_ENABLE=0
     CUDA_VISIBLE_DEVICES=0,1 \
     vllm serve "${COMMON_FLAGS[@]}" \
@@ -183,11 +296,13 @@ configC1_prefill() {
    "mem_pool_size_gb":"8"
  }}
 JSON
-)" 2>&1 | tee "$LOG_DIR/vllm_configC1_prefill_$(hostname).log"
+)" 2>&1 | tee "$RUN_DIR/results/vllm_configC1_prefill_$(hostname).log"
 }
 
 configC1_decode() {
     echo "[launch] configC1 decode: TP=2 PP=1 on GPU 2,3, port 8200"
+    start_system_collectors
+    start_s3_sync_daemon
     export NCCL_CUMEM_ENABLE=0
     CUDA_VISIBLE_DEVICES=2,3 \
     vllm serve "${COMMON_FLAGS[@]}" \
@@ -211,7 +326,7 @@ configC1_decode() {
    "mem_pool_size_gb":"8"
  }}
 JSON
-)" 2>&1 | tee "$LOG_DIR/vllm_configC1_decode_$(hostname).log"
+)" 2>&1 | tee "$RUN_DIR/results/vllm_configC1_decode_$(hostname).log"
 }
 
 # ── Config C2 — NOT SUPPORTED on this branch ──────────────────────────────────
@@ -247,6 +362,8 @@ configD_prefill() {
         exit 1
     fi
     echo "[launch] configD prefill: TP=1, my_ip=$VLLM_HOST_IP, decoder=$decoder_host"
+    start_system_collectors
+    start_s3_sync_daemon
 
     export PYTHONFAULTHANDLER=1
 
@@ -260,7 +377,7 @@ configD_prefill() {
     # STRACE_CMD="strace -e trace=memory,mmap,madvise -f -o $LOG_DIR/strace_prefill_$(hostname)_$(date +%s).log"
 
     # ─ Level 3: AddressSanitizer (memory debugging) ────────────────────────
-    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$LOG_DIR/asan_prefill"
+    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$RUN_DIR/results/asan_prefill"
     export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
     export MALLOC_PERTURB_=$(( RANDOM % 256 ))
 
@@ -269,7 +386,7 @@ configD_prefill() {
 
     echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
     echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_prefill_*.log"
-    echo "[launch] ASAN logs → $LOG_DIR/asan_prefill*"
+    echo "[launch] ASAN logs → $RUN_DIR/results/asan_prefill*"
 
     CUDA_VISIBLE_DEVICES=0 \
     ${STRACE_CMD:-} vllm serve "${COMMON_FLAGS[@]}" \
@@ -295,7 +412,7 @@ configD_prefill() {
    "mem_pool_size_gb":"8"
  }}
 JSON
-)" 2>&1 | tee "$LOG_DIR/vllm_configD_prefill_$(hostname).log"
+)" 2>&1 | tee "$RUN_DIR/results/vllm_configD_prefill_$(hostname).log"
 }
 
 # 여기 Prefill ip넣어야함
@@ -308,6 +425,8 @@ configD_decode() {
         exit 1
     fi
     echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP, proxy=$PROXY_IP"
+    start_system_collectors
+    start_s3_sync_daemon
 
     export PYTHONFAULTHANDLER=1
 
@@ -321,7 +440,7 @@ configD_decode() {
     # STRACE_CMD="strace -e trace=memory,mmap,madvise -f -o $LOG_DIR/strace_decode_$(hostname)_$(date +%s).log"
 
     # ─ Level 3: AddressSanitizer (memory debugging) ────────────────────────
-    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$LOG_DIR/asan_decode"
+    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$RUN_DIR/results/asan_decode"
     export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
     export MALLOC_PERTURB_=$(( RANDOM % 256 ))
 
@@ -330,7 +449,7 @@ configD_decode() {
 
     echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
     echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_decode_*.log"
-    echo "[launch] ASAN logs → $LOG_DIR/asan_decode*"
+    echo "[launch] ASAN logs → $RUN_DIR/results/asan_decode*"
 
     CUDA_VISIBLE_DEVICES=0 \
     ${STRACE_CMD:-} vllm serve "${COMMON_FLAGS[@]}" \
@@ -356,7 +475,7 @@ configD_decode() {
    "mem_pool_size_gb":"8"
  }}
 JSON
-)" 2>&1 | tee "$LOG_DIR/vllm_configD_decode_$(hostname).log"
+)" 2>&1 | tee "$RUN_DIR/results/vllm_configD_decode_$(hostname).log"
 }
 
 # ── proxy launcher (shared by C1 and D) ──────────────────────────────────────
@@ -371,6 +490,10 @@ launch_proxy() {
     local prefill_kv_port="${PREFILL_KV_PORT:-14600}"
     local decode_kv_port="${DECODE_KV_PORT:-14700}"
     echo "[launch] official disagg proxy: prefill=$prefill_host:8100 decode=$decode_host:8200 frontend=$frontend_port"
+    # Proxy 만 단독으로 띄울 때도 같은 RUN_DIR 에 로그 남기고 S3 sync 동작하도록.
+    # 보통 prefill 노드의 다른 터미널에서 호출되므로 prefill 역할의 sync 와 중복될 수
+    # 있지만 s5cmd 가 변경 없는 파일은 skip 하므로 무해.
+    start_s3_sync_daemon
     # quart binds to localhost by default in the upstream script. We invoke it
     # via the CLI args it exposes; nothing else is patched.
     python "$PROXY_SCRIPT" \
@@ -381,7 +504,7 @@ launch_proxy() {
         --decode-kv-host  "$decode_host" \
         --prefill-kv-port "$prefill_kv_port" \
         --decode-kv-port  "$decode_kv_port" \
-        2>&1 | tee "$LOG_DIR/pd_proxy_$(hostname).log"
+        2>&1 | tee "$RUN_DIR/results/pd_proxy_$(hostname).log"
 }
 
 # ── dispatch ──────────────────────────────────────────────────────────────────

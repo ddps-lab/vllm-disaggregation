@@ -144,13 +144,15 @@ disagg-exp/
 | 3. vLLM editable install | `VLLM_USE_PRECOMPILED=1 uv pip install -e .` |
 | 4. LMCache ≥ 0.3.9 | 이 브랜치는 안 쓰지만 vLLM dependency check 통과용 |
 | 5. Python 의존성 | httpx, fastapi, aiohttp, numpy, **quart** (proxy) |
-| 5b. 시스템 도구 | `ifstat`, `s5cmd` |
-| 6. chrony | `chronyc tracking` 스냅샷 |
-| 7. DCGM exporter | Prometheus `:9400` |
-| 8. Metric collectors | `nvidia-smi dmon` (1Hz), `ifstat` (1Hz), DCGM scrape (2s) — PID 파일 관리 |
+| 5b. 시스템 도구 | `ifstat`, `s5cmd`, `nvtop` |
+| 6. chrony | 존재 여부 확인만 (baseline 스냅샷은 launch_configs.sh 가 실험 단위로 생성) |
+| 7. DCGM exporter | Prometheus `:9400` 시작 (이미 도는 경우 skip) |
 | 9. 검증 | `import vllm, lmcache` |
 
-PID 파일: `$EXP_LOG_DIR/.pid_{nvidia_dmon,ifstat,dcgm_loop}` → 재실행 시 안전하게 kill 후 재시작.
+> **변경 (2026-05)**: 시스템 metric collector (`nvidia-smi dmon`, `ifstat`, DCGM scrape)
+> 는 setup.sh 가 시작하지 않습니다. 실험 단위로 깨끗한 `$RUN_DIR/system_logs/` 폴더에
+> 출력되도록 **`launch_configs.sh` 가 vllm serve 시작과 동시에 collector 도 시작**
+> 합니다. PID 파일은 `$RUN_DIR/.pid_*`.
 
 ### 4.2 `launch_configs.sh` — `vllm serve` 디스패처
 
@@ -184,6 +186,45 @@ PYTHONHASHSEED=123                          # cross-node 직렬화 결정성
 VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1     # tensor_id 일치 (§2.3 참고)
 NCCL_IB_DISABLE=1, NCCL_SOCKET_IFNAME=...   # NCCL transport 강제
 ```
+
+#### 4.2.1 실험 단위 폴더 구조 (RUN_DIR)
+`launch_configs.sh` 가 호출되면 자동으로 다음 폴더를 만들고 vllm 로그·proxy 로그·
+ASAN 로그·sweep 결과는 `results/`, 시스템 collector 출력은 `system_logs/` 에 떨어집니다.
+
+```
+$EXP_LOG_DIR/{CONFIG}-{SERVED_MODEL_NAME}/      ← 예: ~/exp-logs/D-qwen2.5-3b/
+├── system_logs/
+│   ├── nvidia_smi.csv          (1Hz)
+│   ├── ifstat.csv              (1Hz)
+│   ├── dcgm.log                (2s scrape)
+│   └── clock_baseline_*.txt    (chrony 스냅샷)
+└── results/
+    ├── vllm_configD_prefill_<host>.log     (Prefill 노드만)
+    ├── vllm_configD_decode_<host>.log      (Decode 노드만)
+    ├── pd_proxy_<host>.log                 (proxy 띄운 노드만)
+    ├── asan_prefill*.log
+    ├── p2048_d64_r1.0.json                 (sweep 결과)
+    ├── p2048_d64_r1.0.log
+    ├── p2048_d64_r1.0.metrics.csv
+    ├── p2048_d64_r1.0.metrics.json
+    └── .done_p2048_d64_r1.0
+```
+collector 와 s3 sync daemon 의 PID 는 `$RUN_DIR/.pid_*` 에 저장되고 launch
+스크립트가 종료 (Ctrl+C 또는 vllm exit) 되면 trap 으로 자동 정리됩니다.
+
+#### 4.2.2 S3 sync (양쪽 노드 자동)
+`launch_configs.sh` 가 collector 와 함께 background `s5cmd sync` daemon 도
+시작합니다. **Prefill / Decode 양쪽 노드** 각자 자기 `$RUN_DIR/` 을 30초마다
+S3 로 push:
+
+```
+s3://$S3_BUCKET/raw/official/{RUN_TAG}/{VLLM_HOST_IP}/{CONFIG}-{MODEL}/
+├── system_logs/   ← 그대로 mirror
+└── results/       ← 그대로 mirror
+```
+
+- `S3_BUCKET=""` 으로 export 하면 sync 비활성화
+- `s5cmd` 미설치 시 자동 skip (경고만)
 
 **Port plan**:
 - Prefill HTTP: 8100, kv_port: 14600 (+rank)
@@ -393,40 +434,72 @@ python disagg-exp/sweep_official.py --config C1 --base-url http://localhost:8000
 
 ### 7.4 Config D — Cross-node PD (2× g6.xlarge)
 
+> **RUN_TAG 사용법 (한 줄)**: 새 실험 시작할 때 양쪽 노드에서
+> `export RUN_TAG=20260526-1530-baseline` 같이 **동일한 값**을 export. 그 뒤로는
+> 평소 명령어 그대로 — 모든 컴포넌트 (launch_configs.sh, sweep_official.py) 가
+> RUN_TAG env 를 자동 인식. 미지정 시 `YYYYMMDD-HHMM` 분 단위 자동 생성 (양쪽
+> 노드가 같은 분에 띄우면 합쳐짐).
+
 **Decode node:**
 ```bash
+# (실험마다 한 번) 실험 식별자 — Prefill 과 동일하게
+export RUN_TAG=20260526-1530-baseline
+
 export VLLM_HOST_IP=10.0.x.y       # 이 노드의 private IP
-export PROXY_IP=10.0.x.z           # ← prefill/proxy 노드의 private IP (필수, self-IP fallback 방지)
+export PROXY_IP=10.0.x.z           # ← prefill/proxy 노드의 private IP (필수)
 export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5     # 실제 NIC 이름으로
+
 bash disagg-exp/launch_configs.sh configD decode
+# 시작 시 stdout 에서 확인:
+#   [launch] RUN_TAG=20260526-1530-baseline
+#   [launch] S3 dest=s3://.../raw/official/20260526-1530-baseline/10.0.x.y/D-qwen2.5-3b/
 ```
 
 **Prefill node:**
 ```bash
+# (실험마다 한 번) Decode 와 동일한 값
+export RUN_TAG=20260526-1530-baseline
+
 export VLLM_HOST_IP=10.0.x.z       # 이 노드의 private IP
 export DECODER_HOST=10.0.x.y       # decode 노드의 private IP
 export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5
+
 bash disagg-exp/launch_configs.sh configD prefill
 ```
 
 **Prefill node (또 다른 터미널, 둘 다 ready 후):**
 ```bash
-# Proxy 띄우기
+# RUN_TAG 이 새 셸엔 없을 수 있으니 다시 export (또는 .bashrc 등록)
+export RUN_TAG=20260526-1530-baseline
+
+# Proxy 띄우기 (이 셸도 자기 RUN_DIR 에 s3 sync 시작)
 bash disagg-exp/launch_configs.sh configD proxy
+```
+
+**Prefill node (또또 다른 터미널, sweep):**
+```bash
+export RUN_TAG=20260526-1530-baseline
+export VLLM_HOST_IP=10.0.x.z
 
 # Sweep — Decode 노드의 /metrics URL 을 반드시 전달 (per-side 측정용)
 .venv/bin/python disagg-exp/sweep_official.py \
   --config D \
   --base-url http://127.0.0.1:8000 \
   --decode-metrics-url http://10.0.x.y:8200/metrics
+# 또는 명시적으로 --run-tag 전달:
+#   --run-tag 20260526-1530-baseline
 ```
 
-> ⚠️ `--decode-metrics-url` 을 안 주면 `{point}.metrics.json` 의 `_derived.decode_rps`,
-> `_derived.decode_generation_tps` 가 **null** 로 떨어집니다. 사전 검증:
-> `curl -s http://10.0.x.y:8200/metrics | grep -E "^vllm:num_requests_running"` 가
-> 라인을 반환해야 함 (안 나오면 AWS SG 에 8200/tcp 인바운드 필요).
+> ⚠️ `--decode-metrics-url` 을 안 주면 `{point}.metrics.json` 의
+> `_derived.decode_rps`, `_derived.decode_generation_tps` 가 **null** 로 떨어집니다.
+> 사전 검증: `curl -s http://10.0.x.y:8200/metrics | grep -E "^vllm:num_requests_running"`
+> 가 라인을 반환해야 함 (안 나오면 AWS SG 에 8200/tcp 인바운드 필요).
+
+> 💡 **새 실험 돌릴 때마다 RUN_TAG 만 바꾸면 됨**: `export RUN_TAG=20260526-1700-exp02-bigbatch`
+> 양쪽 노드에서 동일하게 export 한 다음 launch 다시 시작. 결과는 자동으로 다른
+> S3 폴더로 분리됨.
 
 ### 7.5 첫 검증 단계 권장 사항
 
@@ -456,7 +529,8 @@ bash disagg-exp/launch_configs.sh configC2 prefill
 
 ```bash
 # S3에서 로컬로 다운로드
-aws s3 sync s3://hdjung-disaggregation-result/raw/official/$(date +%Y%m%d)/ ./data/
+aws s3 sync s3://hdjung-disaggregation-result/raw/official/{RUN_TAG}/ ./data/{RUN_TAG}/
+# 예: aws s3 sync s3://hdjung-disaggregation-result/raw/official/20260526-1530-baseline/ ./data/20260526-1530-baseline/
 
 # 표 출력
 python disagg-exp/analyze_official.py --log-dir ./data --configs A1 A2 A3 B C1 D --plot
@@ -472,25 +546,51 @@ python disagg-exp/analyze_official.py --log-dir ./data --configs C1 D \
 
 ## 9. 로그 구조
 
+### 9.1 로컬 (각 노드)
 ```
 $EXP_LOG_DIR/
-├── <config>/
-│   ├── p2048_d64_r1.0.json          # vllm bench serve 결과 (end-to-end metrics)
-│   ├── p2048_d64_r1.0.log           # subprocess stdout/stderr
-│   ├── p2048_d64_r1.0.metrics.csv   # /metrics scraper 시계열 (1Hz, prefill+decode 컬럼 분리)
-│   ├── p2048_d64_r1.0.metrics.json  # per-side summary (_derived 에 RPS/TPS, gauge 통계)
-│   ├── .done_p2048_d64_r1.0         # resume 마커
-│   └── .failed_p..._r4.0            # 실패 마커 (지우면 retry)
-├── nvidia_smi.csv                   # 1Hz
-├── ifstat.csv                       # 1Hz
-├── dcgm.log                         # 2s
-├── clock_baseline_<host>.txt        # chrony snapshot
-├── vllm_configC1_{prefill,decode}_<host>.log
-├── pd_proxy_<host>.log
-└── .pid_{nvidia_dmon,ifstat,dcgm_loop}
+└── D-qwen2.5-3b/                              ← {CONFIG}-{SERVED_MODEL_NAME}
+    ├── system_logs/
+    │   ├── nvidia_smi.csv                     # 1Hz
+    │   ├── ifstat.csv                         # 1Hz
+    │   ├── dcgm.log                           # 2s scrape
+    │   └── clock_baseline_<host>.txt          # chrony snapshot
+    ├── results/
+    │   ├── vllm_configD_{prefill|decode}_<host>.log
+    │   ├── pd_proxy_<host>.log                # proxy 띄운 노드만
+    │   ├── asan_{prefill|decode}*.log         # ASAN 로그
+    │   ├── p2048_d64_r1.0.json                # vllm bench serve 결과 (end-to-end)
+    │   ├── p2048_d64_r1.0.log                 # bench subprocess stdout
+    │   ├── p2048_d64_r1.0.metrics.csv         # /metrics scraper 시계열
+    │   ├── p2048_d64_r1.0.metrics.json        # per-side summary (_derived RPS/TPS)
+    │   └── .done_p2048_d64_r1.0               # resume 마커
+    └── .pid_*                                  # collector / s3-sync PIDs (자동 정리됨)
 ```
 
-S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{YYYYMMDD}/{hostname}/{config}/`
+### 9.2 S3 (양쪽 노드의 RUN_DIR 이 같은 RUN_TAG 폴더로 합쳐짐)
+```
+s3://hdjung-disaggregation-result/raw/official/
+└── {RUN_TAG}/                                  ← 예: 20260526-1530-baseline
+    ├── 172.31.49.208/                          ← Prefill 노드 (VLLM_HOST_IP)
+    │   └── D-qwen2.5-3b/
+    │       ├── system_logs/                    ← Prefill 노드의 시스템 로그
+    │       └── results/                        ← Prefill 서버 로그 + proxy 로그 + sweep 결과 전부
+    └── 172.31.48.200/                          ← Decode 노드 (VLLM_HOST_IP)
+        └── D-qwen2.5-3b/
+            ├── system_logs/                    ← Decode 노드의 시스템 로그
+            └── results/                        ← Decode 서버 로그만
+```
+
+- **`{RUN_TAG}` 기본값**: `$(date +%Y%m%d-%H%M)` (분 단위). 양쪽 노드를 같은 분에
+  띄우면 자동으로 같은 폴더에 합쳐짐. 다른 분이면 폴더 두 개로 갈라짐 — 사후에
+  사람이 합치거나, 명시적으로 `export RUN_TAG=...` 동일하게 설정 권장.
+- **per-node 자체 sync**: 각 노드의 `launch_configs.sh` 가 자기 `$RUN_DIR/` 을
+  30초마다 S3 로 push (양쪽 노드 모두 `s5cmd` 설치 필요).
+- **sweep 결과** (`p*.json`, `.metrics.*`) 는 sweep_official.py 가 도는 노드
+  (보통 Prefill) 의 `results/` 에만 들어감. Decode 의 `results/` 엔 자기 vllm log
+  만 있음.
+
+S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{RUN_TAG}/{VLLM_HOST_IP}/{CONFIG}-{MODEL}/{system_logs|results}/`
 
 (커스텀 브랜치는 `raw/custom/...`, 이 브랜치는 `raw/official/...` — 안 섞임.)
 
@@ -511,6 +611,7 @@ S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{YYYYMMDD}/{host
 
 | 커밋 | 내용 |
 |---|---|
+| (이번 변경) | **S3 폴더 구조 재설계** — `raw/official/{RUN_TAG}/{ip}/{config}-{model}/{system_logs,results}/`. Decode 노드도 background s5cmd sync 시작 → Decode 서버 log 도 S3 에 자동 업로드. setup.sh 의 collector 시작은 launch_configs.sh 로 이동 (실험 단위로 system_logs 분리). `RUN_TAG` env 도입 (기본 `YYYYMMDD-HHMM`). |
 | `0f7eb19ab` | **CUDA Graph 기본 비활성화** — P2pNcclConnector 안정성 우선. `ENFORCE_EAGER` 기본 1 |
 | `3c698c672` | **sweep 메트릭에 per-side RPS/TPS 추가** — `/metrics` scraper 도입. `{point}.metrics.csv` / `{point}.metrics.json` 자동 생성. `vllm:gpu_cache_usage_perc` → `vllm:kv_cache_usage_perc` 버그 fix |
 | `054d1ee70` | **모델을 Qwen2.5-3B-Instruct 로 변경** — 양자화(AWQ) 제거. `MODEL_NAME` / `MODEL_PATH` / `MODEL_DTYPE` 를 sweep_official.py 모듈 상수로 통합. PD_PAIRS: `(2048,128)/(1024,512)/(128,2048)` → `(2048,64)/(512,512)/(128,1024)` |
@@ -525,3 +626,5 @@ S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{YYYYMMDD}/{host
 2. **`{point}.metrics.json` 의 `decode_rps`/`decode_generation_tps` 가 `null`** → sweep 돌릴 때 `--decode-metrics-url` 누락. §7.4 참고.
 3. **NCCL handshake 후 hang** → CUDA Graph 잔재. `ENFORCE_EAGER=1` (기본값) 확실히 들어갔는지 vllm 로그 첫 줄에서 `enforce_eager=True` 확인.
 4. **결과 JSON 의 `model_id="qwen2.5-3b"` 만 보고 모델 식별 어려움** → metadata 의 `model_path`, `dtype` 같이 확인.
+5. **S3 에 Prefill / Decode 폴더가 다른 RUN_TAG 로 갈라짐** → 양쪽 노드에서 export RUN_TAG 안 하고 default (분 단위 timestamp) 가 어긋난 경우. 둘 다 같은 분에 띄우지 못했다면 사후에 사람이 폴더 합치거나, 다음 실험 시 RUN_TAG 명시.
+6. **Decode 노드 vllm 서버 log 가 S3 에 없음** → Decode 노드에 s5cmd 미설치이거나 `S3_BUCKET=""` 으로 비활성화된 경우. setup.sh 가 s5cmd 자동 설치하므로 보통 자동 동작. 확인: Decode 노드에서 `command -v s5cmd && echo OK`.

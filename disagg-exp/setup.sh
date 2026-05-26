@@ -94,12 +94,10 @@ fi
 python -c "import huggingface_hub" &>/dev/null \
     || uv pip install huggingface_hub 2>/dev/null || true
 
-# ── 6. chrony ─────────────────────────────────────────────────────────────────
-# chrony: 시간 동기화 도구인데 다른 인스턴스간 시간 오차가 발생할 수 있기 때문에 로그에서 이를 보정 하기 위해 사용
-if command -v chronyc &>/dev/null; then
-    chronyc tracking > "$LOG_DIR/clock_baseline_$(hostname).txt" 2>&1 || true
-    echo "[setup] chrony baseline saved → $LOG_DIR/clock_baseline_$(hostname).txt"
-else
+# ── 6. chrony 검증만 ─────────────────────────────────────────────────────────
+# chrony baseline 파일은 launch_configs.sh 가 실험 단위로 RUN_DIR/system_logs/ 안에
+# 생성. 여기서는 chronyc 존재 여부만 확인.
+if ! command -v chronyc &>/dev/null; then
     echo "[setup] WARN: chronyc not found. Install with: sudo apt install chrony"
 fi
 
@@ -117,59 +115,12 @@ if ! curl -sf "http://localhost:9400/metrics" | grep -q DCGM_FI 2>/dev/null; the
     fi
 fi
 
-# ── 8. background metric collectors ─────────────────────────────────────────
-# 실험이 진행되는 동안, 1초 단위로 컴퓨터의 GPU, 네트워크를 계속해서 기록하는 로직
-PIDFILE_DMON="$LOG_DIR/.pid_nvidia_dmon"
-PIDFILE_IFSTAT="$LOG_DIR/.pid_ifstat"
-PIDFILE_DCGM="$LOG_DIR/.pid_dcgm_loop"
-
-# 여러 sweep 동안 백그라운드 프로세스가 실행 중일 수 있으므로, 일단 초기화
-_kill_pid_file() {
-    local pf="$1"
-    if [[ -f "$pf" ]]; then
-        local pid; pid=$(cat "$pf")
-        kill "$pid" 2>/dev/null || true
-        rm -f "$pf"
-    fi
-}
-
-_kill_pid_file "$PIDFILE_DMON"
-_kill_pid_file "$PIDFILE_IFSTAT"
-_kill_pid_file "$PIDFILE_DCGM"
-# belt-and-suspenders: also kill by command pattern
-pkill -f "nvidia-smi dmon" 2>/dev/null || true
-pkill -f "ifstat -t" 2>/dev/null || true
-
-# nvidia-smi dmon: 1Hz, Power | Utilization | SM Clk | Memory
-# DCGM 보단 라이트 하고 혹시 몰라서 DCGM과 함꼐 이중으로 수집하는것 
-nohup nvidia-smi dmon -s pucvmet -d 1 -o DT \
-    > "$LOG_DIR/nvidia_smi.csv" 2>&1 &
-echo $! > "$PIDFILE_DMON"
-echo "[setup] nvidia-smi dmon pid=$(cat "$PIDFILE_DMON")"
-
-# ifstat: NIC throughput 1Hz with timestamps
-#  Prefill ➔ Decode 노드로 KV 캐시를 초당 몇 MB/s로 밀어넣고 있는지 실시간으로 기록
-if command -v ifstat &>/dev/null; then
-    IFACE=$(ip route get 1 2>/dev/null | awk '/dev/{print $5;exit}')
-    nohup ifstat -t -i "${IFACE:-eth0}" 1 \
-        > "$LOG_DIR/ifstat.csv" 2>&1 &
-    echo $! > "$PIDFILE_IFSTAT"
-    echo "[setup] ifstat pid=$(cat "$PIDFILE_IFSTAT")"
-else
-    echo "[setup] WARN: ifstat not found — NIC metrics absent."
-fi
-
-# DCGM scrape loop — use PID file so we can reliably kill it on re-run
-# 자세한 GPU 메트릭을 수집 
-(while true; do
-    curl -sf "http://localhost:9400/metrics" \
-        | grep -E "DCGM_FI_DEV_(FB_USED|GPU_UTIL|SM_OCCUPANCY|POWER_USAGE|DRAM_ACTIVE|MEM_COPY_UTILIZATION)" \
-        >> "$LOG_DIR/dcgm.log" 2>/dev/null
-    echo "---" >> "$LOG_DIR/dcgm.log"
-    sleep 2
-done) &
-echo $! > "$PIDFILE_DCGM"
-echo "[setup] dcgm scrape loop pid=$(cat "$PIDFILE_DCGM")"
+# ── 8. background metric collectors — REMOVED ───────────────────────────────
+# 시스템 metric collector (nvidia-smi dmon, ifstat, DCGM scrape loop) 는 더이상
+# setup.sh 가 직접 실행하지 않음. 이유: 실험 단위로 분리된 폴더
+# ($EXP_LOG_DIR/{CONFIG}-{MODEL}/system_logs/) 에 출력해야 깔끔하게 S3 sync 되는데,
+# setup.sh 시점엔 어떤 config 가 실행될지 모르기 때문.
+# → launch_configs.sh 가 vllm serve 시작과 동시에 자기 RUN_DIR 에 맞춰 collector 시작/종료.
 
 # ── 9. validation ─────────────────────────────────────────────────────────────
 python -c "
@@ -187,4 +138,7 @@ echo "  LOG_DIR: $LOG_DIR"
 echo ""
 echo "Next steps:"
 echo "  source $VENV/bin/activate"
-echo "  bash disagg-exp/launch_configs.sh configA"
+echo "  # 실험 식별자 (양쪽 노드에서 같은 값 권장)"
+echo "  export RUN_TAG=\$(date +%Y%m%d-%H%M)-baseline"
+echo "  bash disagg-exp/launch_configs.sh configA          # monolithic"
+echo "  bash disagg-exp/launch_configs.sh configD prefill  # cross-node PD"

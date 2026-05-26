@@ -69,14 +69,30 @@ MODEL_NAME = "qwen2.5-3b"                       # = --served-model-name on serve
 MODEL_PATH = "Qwen/Qwen2.5-3B-Instruct"         # HF id, used as bench --tokenizer
 MODEL_DTYPE = "half"                            # half | bfloat16 | float16
 
+# ── run identity ─────────────────────────────────────────────────────────────
+# 양쪽 노드에서 export RUN_TAG=... 으로 같은 값 주면 S3 에서 한 폴더로 합쳐짐.
+# 미지정 시 YYYYMMDD-HHMM (분 단위) — 같은 분에 양쪽 띄우면 폴더 일치, 다른 분이면
+# 사후에 사람이 합쳐야 함.
+RUN_TAG = os.environ.get("RUN_TAG") or _dt.datetime.now().strftime("%Y%m%d-%H%M")
+
 
 # ── S3 sync (best-effort, optional) ──────────────────────────────────────────
-def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Event | None:
-    """Background sync of LOG_DIR → s3://{bucket}/raw/official/{date}/{host}/{config}/.
+def start_s3_sync(
+    bucket: str,
+    run_tag: str,
+    host_ip: str,
+    run_dir: Path,
+    config_model: str,
+    interval: int = 30,
+) -> threading.Event | None:
+    """Background sync of run_dir → S3.
 
-    "official" prefix → sweep.py(custom) 결과와 구분.
-    config 한 단계 더 → 같은 호스트에서 여러 config 결과 보관해도 안 섞임.
-    Returns the stop Event, or None if s5cmd is missing or bucket is empty.
+    Path 구조:
+        s3://{bucket}/raw/official/{run_tag}/{host_ip}/{config_model}/
+
+    run_dir 의 system_logs/, results/ 가 그대로 mirror 된다. launch_configs.sh
+    의 daemon 과 같은 위치로 동기화되지만 s5cmd 가 unchanged 파일은 skip 하므로
+    redundant 해도 무해.
     """
     if not bucket:
         print("[s3] sync disabled (empty bucket)")
@@ -85,16 +101,14 @@ def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Eve
         print("[s3] s5cmd not found on PATH — S3 sync disabled")
         return None
 
-    host = socket.gethostname()
-    date = _dt.datetime.utcnow().strftime("%Y%m%d")
-    dest = f"s3://{bucket}/raw/official/{date}/{host}/{config}/"
+    dest = f"s3://{bucket}/raw/official/{run_tag}/{host_ip}/{config_model}/"
     stop = threading.Event()
 
     def _loop() -> None:
         while not stop.is_set():
             try:
                 subprocess.run(
-                    ["s5cmd", "sync", f"{LOG_DIR}/", dest],
+                    ["s5cmd", "sync", f"{run_dir}/", dest],
                     check=False, capture_output=True, timeout=120,
                 )
             except Exception as exc:
@@ -103,7 +117,7 @@ def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Eve
         # final flush
         try:
             subprocess.run(
-                ["s5cmd", "sync", f"{LOG_DIR}/", dest],
+                ["s5cmd", "sync", f"{run_dir}/", dest],
                 check=False, capture_output=True, timeout=300,
             )
         except Exception:
@@ -111,7 +125,7 @@ def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Eve
 
     t = threading.Thread(target=_loop, daemon=True, name="s3-sync")
     t.start()
-    print(f"[s3] syncing {LOG_DIR}/ → {dest} every {interval}s")
+    print(f"[s3] syncing {run_dir}/ → {dest} every {interval}s")
     return stop
 
 
@@ -507,7 +521,14 @@ async def main(args: argparse.Namespace) -> None:
     config = args.config
 
     repo_root = Path(__file__).resolve().parent.parent
-    out_dir = Path(LOG_DIR) / config
+
+    # Run-scoped directory mirroring S3 structure:
+    #   $LOG_DIR/{config}-{model_name}/results/
+    # launch_configs.sh 가 같은 경로 (system_logs + results) 를 미리 만들어둠.
+    run_tag = args.run_tag or RUN_TAG
+    config_model = f"{config}-{MODEL_NAME}"
+    run_dir = Path(LOG_DIR) / config_model
+    out_dir = run_dir / "results"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Model identity is hardcoded at the top of this file (single source of
@@ -517,6 +538,7 @@ async def main(args: argparse.Namespace) -> None:
         f"[sweep] served_name={MODEL_NAME} model_path={MODEL_PATH} dtype={MODEL_DTYPE}",
         flush=True,
     )
+    print(f"[sweep] run_tag={run_tag} run_dir={run_dir}", flush=True)
 
     # `vllm` CLI is required.
     if shutil.which("vllm") is None:
@@ -525,11 +547,21 @@ async def main(args: argparse.Namespace) -> None:
 
     await wait_for_health(base_url, timeout_s=args.health_timeout)
 
-    # Optional S3 sync.
+    # Optional S3 sync. New path structure:
+    #   raw/official/{run_tag}/{host_ip}/{config-model}/
+    # host_ip 는 VLLM_HOST_IP env (이 노드의 private IP) — launch_configs.sh 와 일치.
     bucket = args.s3_bucket if args.s3_bucket is not None else os.environ.get(
         "S3_BUCKET", "hdjung-disaggregation-result"
     )
-    s3_stop = start_s3_sync(bucket, config, interval=int(os.environ.get("S3_SYNC_INTERVAL", "30")))
+    host_ip = os.environ.get("VLLM_HOST_IP", socket.gethostname())
+    s3_stop = start_s3_sync(
+        bucket=bucket,
+        run_tag=run_tag,
+        host_ip=host_ip,
+        run_dir=run_dir,
+        config_model=config_model,
+        interval=int(os.environ.get("S3_SYNC_INTERVAL", "30")),
+    )
 
     points = build_grid()
     print(f"Grid: {len(points)} points × num_prompts={NUM_PROMPTS}", flush=True)
@@ -640,6 +672,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--stop-on-failure", action="store_true",
         help="Abort the whole sweep on the first failed point.",
+    )
+    parser.add_argument(
+        "--run-tag", default=os.environ.get("RUN_TAG", ""),
+        help="실험 식별자 (S3 경로의 한 레벨). 양쪽 노드에서 같은 값을 export 하면 "
+             "S3 한 폴더로 합쳐짐. 미지정 시 YYYYMMDD-HHMM (분 단위) 자동.",
     )
     parser.add_argument(
         "--prefill-metrics-url",
