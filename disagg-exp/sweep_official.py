@@ -25,9 +25,11 @@ Per-point output:
 
 import argparse
 import asyncio
+import csv
 import datetime as _dt
 import json
 import os
+import re
 import shutil
 import socket
 import subprocess
@@ -35,6 +37,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from urllib.request import urlopen
 
 import aiohttp
 
@@ -50,13 +53,34 @@ PD_PAIRS = [
     (1024, 512),
     (128, 2048),
 ]
-RATES = _parse_list("SWEEP_RATES", [0.5, 1.0, 2.0])
+RATES = _parse_list("SWEEP_RATES", [1.0, 2.0, 4.0])
 
 NUM_PROMPTS = int(os.environ.get("SWEEP_NUM_PROMPTS", "300"))
 WARMUP_N    = int(os.environ.get("SWEEP_WARMUP_N",   "10"))   # not enforced server-side; analyze can skip
 
 LOG_DIR = os.environ.get("EXP_LOG_DIR", "./results")
 MODEL_NAME = "llama-3.1-8b"  # must match --served-model-name on the server
+
+
+def _require_env(name: str) -> str:
+    """Read a required env var. Fail loud if unset/empty.
+
+    Why this is strict: these values get stamped into every result JSON's
+    metadata. Silently falling back to a default would record incorrect
+    `model_path` / `quantization` / `dtype` when the operator forgot to
+    export them, making comparisons across sweep runs unreliable.
+    """
+    val = os.environ.get(name, "").strip()
+    if not val:
+        print(
+            f"ERROR: required env var {name} is not set.\n"
+            f"  These values are recorded in every result JSON to identify\n"
+            f"  the model/quantization/dtype used for the run.\n"
+            f"  Example: export {name}=...   then re-run.",
+            file=sys.stderr,
+        )
+        sys.exit(2)
+    return val
 
 
 # ── S3 sync (best-effort, optional) ──────────────────────────────────────────
@@ -104,6 +128,143 @@ def start_s3_sync(bucket: str, config: str, interval: int = 30) -> threading.Eve
     return stop
 
 
+# ── /metrics scraping ─────────────────────────────────────────────────────────
+# Prometheus exposition format: lines look like
+#   vllm:num_requests_running{model_name="..."} 12.0
+# Untagged lines (no `{...}`) and `# HELP/# TYPE` lines are ignored.
+_METRIC_RE = re.compile(r"^(vllm:[a-z_]+)\{[^}]*\}\s+([0-9eE+\-.]+)\s*$")
+
+# Metrics we care about for batch-size analysis.
+_METRIC_KEYS = (
+    "vllm:num_requests_running",
+    "vllm:num_requests_waiting",
+    "vllm:gpu_cache_usage_perc",
+)
+
+
+def _scrape_once(url: str, timeout: float = 2.0) -> dict[str, float]:
+    """Pull /metrics text and parse out the vllm:* values we care about.
+
+    Returns empty dict on any error so the scrape thread tolerates transient
+    network blips without dying.
+    """
+    try:
+        with urlopen(url, timeout=timeout) as resp:
+            text = resp.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return {}
+    out: dict[str, float] = {}
+    for line in text.splitlines():
+        if not line or line.startswith("#"):
+            continue
+        m = _METRIC_RE.match(line)
+        if m and m.group(1) in _METRIC_KEYS:
+            try:
+                out[m.group(1)] = float(m.group(2))
+            except ValueError:
+                pass
+    return out
+
+
+class MetricsScraper(threading.Thread):
+    """Polls Prefill+Decode /metrics endpoints during one benchmark point.
+
+    On stop() it flushes a per-point CSV (time series) and returns a summary
+    dict (mean/max/min/p50/p99 across samples). Designed to be lightweight —
+    if an URL is empty/None that side is skipped.
+    """
+
+    def __init__(
+        self,
+        prefill_url: str,
+        decode_url: str,
+        out_csv: Path,
+        interval: float = 1.0,
+    ) -> None:
+        super().__init__(daemon=True, name="metrics-scraper")
+        self.prefill_url = prefill_url or ""
+        self.decode_url = decode_url or ""
+        self.out_csv = out_csv
+        self.interval = interval
+        self.stop_event = threading.Event()
+        self.samples: list[dict] = []
+
+    def run(self) -> None:
+        while not self.stop_event.is_set():
+            row: dict = {"t": time.time()}
+            if self.prefill_url:
+                m = _scrape_once(self.prefill_url)
+                for k in _METRIC_KEYS:
+                    row[f"prefill.{k}"] = m.get(k)
+            if self.decode_url:
+                m = _scrape_once(self.decode_url)
+                for k in _METRIC_KEYS:
+                    row[f"decode.{k}"] = m.get(k)
+            self.samples.append(row)
+            self.stop_event.wait(self.interval)
+
+        if not self.samples:
+            return
+        fields = list(self.samples[0].keys())
+        try:
+            with open(self.out_csv, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fields)
+                w.writeheader()
+                for row in self.samples:
+                    w.writerow(row)
+        except Exception as exc:
+            print(f"[metrics] failed to write {self.out_csv}: {exc}", flush=True)
+
+    def stop(self) -> None:
+        self.stop_event.set()
+        self.join(timeout=10)
+
+    def summary(self) -> dict:
+        """Aggregate per-metric stats across samples.
+
+        Filters out samples where running==0 on both sides (warmup / cooldown)
+        so the mean reflects the actual serving period.
+        """
+        def _active(row: dict) -> bool:
+            p = row.get("prefill.vllm:num_requests_running") or 0
+            d = row.get("decode.vllm:num_requests_running") or 0
+            return (p + d) > 0
+
+        active = [s for s in self.samples if _active(s)]
+        # If nothing was ever active (very short benchmark?), fall back to all.
+        sample_set = active if active else self.samples
+
+        def _stats(key: str) -> dict | None:
+            vals = [s[key] for s in sample_set if s.get(key) is not None]
+            if not vals:
+                return None
+            sv = sorted(vals)
+            n = len(sv)
+            return {
+                "mean": sum(sv) / n,
+                "max": sv[-1],
+                "min": sv[0],
+                "p50": sv[n // 2],
+                "p99": sv[min(n - 1, int(n * 0.99))],
+                "samples": n,
+            }
+
+        out: dict[str, dict] = {}
+        for side, url in (("prefill", self.prefill_url), ("decode", self.decode_url)):
+            if not url:
+                continue
+            for k in _METRIC_KEYS:
+                s = _stats(f"{side}.{k}")
+                if s is not None:
+                    out[f"{side}.{k}"] = s
+        out["_meta"] = {
+            "total_samples": len(self.samples),
+            "active_samples": len(active),
+            "interval_s": self.interval,
+        }
+        return out
+
+
 # ── health check (copied behavior from sweep.py) ──────────────────────────────
 async def wait_for_health(base_url: str, timeout_s: int = 600) -> None:
     """
@@ -142,6 +303,12 @@ def run_one(
     result_dir: Path,
     point_id: str,
     extra_body_min: bool,
+    model_path: str,
+    model_quantization: str,
+    model_dtype: str,
+    prefill_metrics_url: str = "",
+    decode_metrics_url: str = "",
+    metrics_interval: float = 1.0,
 ) -> tuple[bool, dict | None]:
     """Spawn `vllm bench serve` for one (prefill, decode, rate) point.
 
@@ -183,6 +350,12 @@ def run_one(
         f"decode_len={decode_len}",
         f"rate={rate}",
         f"point_id={point_id}",
+        # 실제 model path + quantization 흔적. vllm bench serve의 model_id는
+        # served-model-name(=llama-3.1-8b)만 박혀서 양자화 변형을 구분 못 함.
+        # 이 세 값은 main()에서 _require_env로 검증되어 silent default가 없음.
+        f"model_path={model_path}",
+        f"quantization={model_quantization}",
+        f"dtype={model_dtype}",
     ]
 
     # Force exact output length: ask the server to keep generating to decode_len.
@@ -196,6 +369,17 @@ def run_one(
     log_path = result_dir / f"{point_id}.log"
     print(f"[run] {point_id} → {' '.join(cmd[:6])} ... (logs: {log_path})", flush=True)
 
+    # Start /metrics scraper if either URL is configured.
+    scraper: MetricsScraper | None = None
+    if prefill_metrics_url or decode_metrics_url:
+        scraper = MetricsScraper(
+            prefill_url=prefill_metrics_url,
+            decode_url=decode_metrics_url,
+            out_csv=result_dir / f"{point_id}.metrics.csv",
+            interval=metrics_interval,
+        )
+        scraper.start()
+
     import shlex
     cmd_str = f"{shlex.join(cmd)} 2>&1 | tee {log_path}"
     try:
@@ -205,10 +389,23 @@ def run_one(
         )
     except subprocess.TimeoutExpired:
         print(f"  TIMEOUT after 3600s", flush=True)
+        if scraper is not None:
+            scraper.stop()
         return False, None
     except Exception as exc:
         print(f"  ERROR launching subprocess: {exc}", flush=True)
+        if scraper is not None:
+            scraper.stop()
         return False, None
+
+    if scraper is not None:
+        scraper.stop()
+        try:
+            summary = scraper.summary()
+            with open(result_dir / f"{point_id}.metrics.json", "w") as f:
+                json.dump(summary, f, indent=2)
+        except Exception as exc:
+            print(f"  [metrics] summary write failed: {exc}", flush=True)
 
     if proc.returncode != 0:
         print(f"  exit code {proc.returncode} — see {log_path}", flush=True)
@@ -274,6 +471,16 @@ async def main(args: argparse.Namespace) -> None:
     out_dir = Path(LOG_DIR) / config
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Validate model identity env vars BEFORE anything heavy starts. These are
+    # required so every result JSON's metadata records exactly what was tested.
+    model_path = _require_env("MODEL")
+    model_quantization = _require_env("MODEL_QUANTIZATION")
+    model_dtype = _require_env("MODEL_DTYPE")
+    print(
+        f"[sweep] model_path={model_path} quantization={model_quantization} dtype={model_dtype}",
+        flush=True,
+    )
+
     # `vllm` CLI is required.
     if shutil.which("vllm") is None:
         print("ERROR: `vllm` CLI not on PATH. Activate the venv first.", file=sys.stderr)
@@ -315,12 +522,35 @@ async def main(args: argparse.Namespace) -> None:
                 result_dir=out_dir,
                 point_id=point_id,
                 extra_body_min=not args.no_min_tokens,
+                model_path=model_path,
+                model_quantization=model_quantization,
+                model_dtype=model_dtype,
+                prefill_metrics_url=args.prefill_metrics_url,
+                decode_metrics_url=args.decode_metrics_url,
+                metrics_interval=args.metrics_interval,
             )
 
             if ok and data is not None:
                 marker_done.touch()
                 marker_failed.unlink(missing_ok=True)
                 print(summarize(data), flush=True)
+                metrics_path = out_dir / f"{point_id}.metrics.json"
+                if metrics_path.exists():
+                    try:
+                        with open(metrics_path) as f:
+                            mdata = json.load(f)
+                        parts = []
+                        for side in ("prefill", "decode"):
+                            r = mdata.get(f"{side}.vllm:num_requests_running")
+                            if r is not None:
+                                parts.append(
+                                    f"{side}_running mean={r['mean']:.1f} "
+                                    f"p99={r['p99']:.1f} max={r['max']:.0f}"
+                                )
+                        if parts:
+                            print("  batch — " + " | ".join(parts), flush=True)
+                    except Exception:
+                        pass
                 n_done += 1
             else:
                 marker_failed.touch()
@@ -358,6 +588,23 @@ if __name__ == "__main__":
     parser.add_argument(
         "--stop-on-failure", action="store_true",
         help="Abort the whole sweep on the first failed point.",
+    )
+    parser.add_argument(
+        "--prefill-metrics-url",
+        default=os.environ.get("PREFILL_METRICS_URL", "http://127.0.0.1:8100/metrics"),
+        help="Prometheus /metrics endpoint of the prefill vLLM instance. "
+             "Empty string disables scraping for that side.",
+    )
+    parser.add_argument(
+        "--decode-metrics-url",
+        default=os.environ.get("DECODE_METRICS_URL", ""),
+        help="Prometheus /metrics endpoint of the decode vLLM instance. "
+             "For configD, set this to http://<decode-host>:8200/metrics.",
+    )
+    parser.add_argument(
+        "--metrics-interval", type=float,
+        default=float(os.environ.get("METRICS_INTERVAL", "1.0")),
+        help="Seconds between /metrics polls during each benchmark point.",
     )
     args = parser.parse_args()
     asyncio.run(main(args))

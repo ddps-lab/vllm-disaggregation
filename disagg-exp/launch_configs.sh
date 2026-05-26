@@ -338,6 +338,7 @@ configD_decode() {
 
     CUDA_VISIBLE_DEVICES=0 \
     ${STRACE_CMD:-} vllm serve "${COMMON_FLAGS[@]}" \
+        --no-enable-chunked-prefill \
         --tensor-parallel-size 1 \
         --pipeline-parallel-size 1 \
         --host 0.0.0.0 \
