@@ -1,26 +1,25 @@
 #!/bin/bash
-# Launch vllm serve for each config (A/B/C/D) and role.
+# Launch vllm serve for Config A (cross-node PD on 2× g6.xlarge) and its role.
 # *** Branch: experiment/tier1-vllm-benchmark — uses the official P2pNcclConnector ***
 # *** instead of the custom InstrumentedLMCacheConnector. Goal: minimize bespoke   ***
 # *** code surface area by following vLLM's upstream disaggregated_prefill example. ***
 #
+# Scope (2026-06 재정의):
+#   목적은 disaggregation 사용/미사용 비교가 아니라, disaggregation 안에서
+#   resource allocation / parallelization strategy 를 최적화하기 위한 워크로드 분석.
+#   1단계로 g6.xlarge P1D1 (Config A) 에서 prefill/decode throughput 을 각각 측정하여
+#   워크로드별 throughput 비율을 구한다. 그 비율에 맞춰 이후 노드/병렬화를 늘린다.
+#   따라서 GPU 종류 비교용 Config A(4×T4)/B(L40S)/C(same-node PD) 는 제거했다.
+#   (이전 버전이 필요하면 git history 참고.)
+#
 # Usage:
-#   bash launch_configs.sh configA1           # monolithic 4×T4, TP=2 PP=2 (default A)
-#   bash launch_configs.sh configA2           # monolithic 4×T4, TP=4 PP=1
-#   bash launch_configs.sh configA3           # monolithic 4×T4, TP=1 PP=4
-#   bash launch_configs.sh configA            # alias for configA1
-#   bash launch_configs.sh configB            # monolithic 1×L40S
-#   bash launch_configs.sh configC1 prefill   # same-node PD TP=2 PP=1, prefill side (default C)
-#   bash launch_configs.sh configC1 decode    # same-node PD TP=2 PP=1, decode side
-#   bash launch_configs.sh configC1 proxy     # launch disagg proxy (after both)
-#   bash launch_configs.sh configC2 ...       # NOT SUPPORTED with P2pNcclConnector (PP not implemented)
-#   bash launch_configs.sh configD prefill    # cross-node PD, prefill side
-#   bash launch_configs.sh configD decode     # cross-node PD, decode side
-#   bash launch_configs.sh configD proxy      # launch disagg proxy
+#   bash launch_configs.sh configA prefill    # cross-node PD, prefill side
+#   bash launch_configs.sh configA decode     # cross-node PD, decode side
+#   bash launch_configs.sh configA proxy      # launch disagg proxy
 #
 # Environment overrides (before calling this script):
-#   MODEL                 default: Qwen/Qwen2.5-3B-Instruct
-#   SERVED_MODEL_NAME     default: qwen2.5-3b  (vllm `--served-model-name` 값; 폴더명에도 사용)
+#   MODEL                 default: Qwen/Qwen3-4B
+#   SERVED_MODEL_NAME     default: qwen3-4b  (vllm `--served-model-name` 값; 폴더명에도 사용)
 #   RUN_TAG               default: $(date +%Y%m%d-%H%M)
 #                         실험 식별자. **분 단위까지** 자동 — 양쪽 노드 같은 분에 띄우면
 #                         같은 S3 폴더로 합쳐짐. 어긋나면 명시적으로 export RUN_TAG=...
@@ -54,8 +53,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROXY_SCRIPT="$REPO_ROOT/benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py"
 
-MODEL="${MODEL:-Qwen/Qwen2.5-3B-Instruct}"
-SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-qwen2.5-3b}"
+MODEL="${MODEL:-Qwen/Qwen3-4B}"
+SERVED_MODEL_NAME="${SERVED_MODEL_NAME:-qwen3-4b}"
 RUN_TAG="${RUN_TAG:-$(date +%Y%m%d-%H%M)}"
 S3_BUCKET="${S3_BUCKET:-hdjung-disaggregation-result}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-4096}"
@@ -68,7 +67,7 @@ export PYTHONHASHSEED="${PYTHONHASHSEED:-123}"
 # request_id를 만들어주므로 randomization을 끄는 게 안전하다.
 export VLLM_DISABLE_REQUEST_ID_RANDOMIZATION="${VLLM_DISABLE_REQUEST_ID_RANDOMIZATION:-1}"
 export VLLM_HOST_IP="${VLLM_HOST_IP:-127.0.0.1}"
-# (Fix: Config D cross-node proxy 통신을 위해 PROXY_IP 추가 연동)
+# (Fix: Config A cross-node proxy 통신을 위해 PROXY_IP 추가 연동)
 export PROXY_IP="${PROXY_IP:-$VLLM_HOST_IP}"
 PROXY_PORT="${PROXY_PORT:-30001}"
 
@@ -83,7 +82,7 @@ CONFIG="${1:-}"
 ROLE="${2:-}"
 
 if [[ -z "$CONFIG" ]]; then
-    echo "Usage: $0 <configA|configA1|configA2|configA3|configB|configC1|configD> [prefill|decode|proxy]"
+    echo "Usage: $0 configA [prefill|decode|proxy]"
     exit 1
 fi
 
@@ -196,156 +195,21 @@ if [[ "${ENFORCE_EAGER:-1}" == "1" ]]; then
     COMMON_FLAGS+=( --enforce-eager )
 fi
 
-# ── Config A — monolithic 4×T4. Three TP/PP variants on the same hardware ────
-# Monolithic: no KV connector. P2pNccl is irrelevant here.
-configA1() {
-    echo "[launch] configA1: monolithic 4×T4, TP=2 PP=2, port 8000"
-    start_system_collectors
-    start_s3_sync_daemon
-    CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    vllm serve "${COMMON_FLAGS[@]}" \
-        --tensor-parallel-size 2 \
-        --pipeline-parallel-size 2 \
-        --port 8000 \
-        2>&1 | tee "$RUN_DIR/results/vllm_configA1_$(hostname).log"
-}
-
-configA2() {
-    echo "[launch] configA2: monolithic 4×T4, TP=4 PP=1, port 8000"
-    start_system_collectors
-    start_s3_sync_daemon
-    CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    vllm serve "${COMMON_FLAGS[@]}" \
-        --tensor-parallel-size 4 \
-        --pipeline-parallel-size 1 \
-        --port 8000 \
-        2>&1 | tee "$RUN_DIR/results/vllm_configA2_$(hostname).log"
-}
-
-configA3() {
-    echo "[launch] configA3: monolithic 4×T4, TP=1 PP=4, port 8000"
-    start_system_collectors
-    start_s3_sync_daemon
-    CUDA_VISIBLE_DEVICES=0,1,2,3 \
-    vllm serve "${COMMON_FLAGS[@]}" \
-        --tensor-parallel-size 1 \
-        --pipeline-parallel-size 4 \
-        --port 8000 \
-        2>&1 | tee "$RUN_DIR/results/vllm_configA3_$(hostname).log"
-}
-
-configA() { configA1; }
-
-# ── Config B — monolithic 1×L40S ─────────────────────────────────────────────
-configB() {
-    echo "[launch] configB: monolithic 1×L40S, port 8000"
-    start_system_collectors
-    start_s3_sync_daemon
-    CUDA_VISIBLE_DEVICES=0 \
-    vllm serve "${COMMON_FLAGS[@]}" \
-        --tensor-parallel-size 1 \
-        --port 8000 \
-        2>&1 | tee "$RUN_DIR/results/vllm_configB_$(hostname).log"
-}
-
-# ── Config C1 — same-node PD on 4× T4. P2pNcclConnector via PCIe/SHM ─────────
+# ── Config A — cross-node PD, TCP sockets ────────────────────────────────────
 #
 # Why P2pNcclConnector (vs the LMCache+NIXL combo on the other branch):
 #   - Upstream vLLM example. Zero custom Python in this path.
 #   - Pure NCCL send/recv. NCCL auto-picks the transport (PCIe P2P / SHM for
 #     same-node; TCP sockets for cross-node). Works on AWS without IB/NVLink.
 #
-# kv_buffer_size:
-#   - Producer "1e1" (placeholder; the prefill side does not buffer).
-#   - Consumer "2e9" (~2GB host pinned). Smaller than xpyd's 8e9 because T4 is
-#     tight; can be raised if KV-transfer back-pressure is observed.
-# mem_pool_size_gb: pinned host RAM allocated by TensorMemoryPool. Default is 32
-#   GB which is fine on g4dn.12xlarge (192GB RAM) but blows up on g6.xlarge
-#   (16GB RAM). We pin it explicitly per config.
+# kv_buffer_size: consumer 쪽 수신 버퍼(GPU VRAM). cross-node L4 기준 "2e9"(~2GB).
+# mem_pool_size_gb: pinned host RAM (TensorMemoryPool). default 32GB 는 g6.xlarge
+#   (RAM 16GB) 에서 OOM 이므로 8 로 고정.
 #
-# Ports plan (mind that each TP rank consumes one kv_port → kv_port + rank):
+# Ports plan (each TP rank consumes one kv_port → kv_port + rank):
 #   Prefill HTTP   : 8100              Decode HTTP   : 8200
-#   Prefill kv_port: 14600, 14601      Decode kv_port: 14700, 14701
+#   Prefill kv_port: 14600            Decode kv_port: 14700
 #   Proxy frontend : 8000              Proxy ZMQ     : 30001
-
-configC1_prefill() {
-    echo "[launch] configC1 prefill: TP=2 PP=1 on GPU 0,1, port 8100"
-    start_system_collectors
-    start_s3_sync_daemon
-    export NCCL_CUMEM_ENABLE=0
-    CUDA_VISIBLE_DEVICES=0,1 \
-    vllm serve "${COMMON_FLAGS[@]}" \
-        --no-enable-chunked-prefill \
-        --tensor-parallel-size 2 \
-        --pipeline-parallel-size 1 \
-        --port 8100 \
-        --kv-transfer-config "$(cat <<JSON
-{"kv_connector":"P2pNcclConnector",
- "kv_role":"kv_producer",
- "kv_rank":0,
- "kv_parallel_size":2,
- "kv_buffer_size":"1e1",
- "kv_port":"14600",
- "kv_connector_extra_config":{
-   "proxy_ip":"$VLLM_HOST_IP",
-   "proxy_port":"$PROXY_PORT",
-   "http_ip":"$VLLM_HOST_IP",
-   "http_port":"8100",
-   "send_type":"PUT_ASYNC",
-   "nccl_num_channels":"8",
-   "mem_pool_size_gb":"8"
- }}
-JSON
-)" 2>&1 | tee "$RUN_DIR/results/vllm_configC1_prefill_$(hostname).log"
-}
-
-configC1_decode() {
-    echo "[launch] configC1 decode: TP=2 PP=1 on GPU 2,3, port 8200"
-    start_system_collectors
-    start_s3_sync_daemon
-    export NCCL_CUMEM_ENABLE=0
-    CUDA_VISIBLE_DEVICES=2,3 \
-    vllm serve "${COMMON_FLAGS[@]}" \
-        --tensor-parallel-size 2 \
-        --pipeline-parallel-size 1 \
-        --port 8200 \
-        --kv-transfer-config "$(cat <<JSON
-{"kv_connector":"P2pNcclConnector",
- "kv_role":"kv_consumer",
- "kv_rank":1,
- "kv_parallel_size":2,
- "kv_buffer_size":"2e9",
- "kv_port":"14700",
- "kv_connector_extra_config":{
-   "proxy_ip":"$VLLM_HOST_IP",
-   "proxy_port":"$PROXY_PORT",
-   "http_ip":"$VLLM_HOST_IP",
-   "http_port":"8200",
-   "send_type":"PUT_ASYNC",
-   "nccl_num_channels":"8",
-   "mem_pool_size_gb":"8"
- }}
-JSON
-)" 2>&1 | tee "$RUN_DIR/results/vllm_configC1_decode_$(hostname).log"
-}
-
-# ── Config C2 — NOT SUPPORTED on this branch ──────────────────────────────────
-# P2pNcclConnector explicitly rejects pipeline-parallel (see
-# vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_connector.py:528-530:
-#   "Currently, only symmetric TP is supported. Asymmetric TP, PP, and
-#    others will be supported in future PRs.").
-# Keep the function stub for parity with the other branch but exit loudly.
-configC2_prefill() {
-    echo "[launch] configC2 is NOT supported with P2pNcclConnector (PP not implemented)."
-    echo "         Use experiment/tier1 branch (LMCache+NIXL) for the TP=1 PP=2 variant."
-    exit 2
-}
-configC2_decode() { configC2_prefill; }
-
-configC_prefill() { configC1_prefill; }
-configC_decode()  { configC1_decode; }
-
-# ── Config D — cross-node PD, TCP sockets ────────────────────────────────────
 # Run prefill on one g6.xlarge, decode on another. They reach each other via the
 # VPC network. NCCL falls back to TCP since neither IB nor NVLink exists.
 #
@@ -355,13 +219,13 @@ configC_decode()  { configC1_decode; }
 #   export DECODER_HOST=<decode-node-private-ip>
 #
 # mem_pool_size_gb=4 — g6.xlarge has only 16GB host RAM; default 32GB OOMs.
-configD_prefill() {
+configA_prefill() {
     local decoder_host="${DECODER_HOST:-DECODER_HOST_NOT_SET}"
     if [[ "$decoder_host" == "DECODER_HOST_NOT_SET" ]]; then
-        echo "ERROR: Set DECODER_HOST=<decode-node-private-ip> before running configD prefill"
+        echo "ERROR: Set DECODER_HOST=<decode-node-private-ip> before running configA prefill"
         exit 1
     fi
-    echo "[launch] configD prefill: TP=1, my_ip=$VLLM_HOST_IP, decoder=$decoder_host"
+    echo "[launch] configA prefill: TP=1, my_ip=$VLLM_HOST_IP, decoder=$decoder_host"
     start_system_collectors
     start_s3_sync_daemon
 
@@ -376,17 +240,20 @@ configD_prefill() {
     # Uncomment to enable strace output to file
     # STRACE_CMD="strace -e trace=memory,mmap,madvise -f -o $LOG_DIR/strace_prefill_$(hostname)_$(date +%s).log"
 
-    # ─ Level 3: AddressSanitizer (memory debugging) ────────────────────────
-    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$RUN_DIR/results/asan_prefill"
-    export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
-    export MALLOC_PERTURB_=$(( RANDOM % 256 ))
+    # ─ AddressSanitizer (memory debugging) — throughput 측정에서는 끈다 ──────
+    # ASAN(LD_PRELOAD libasan + ASAN_OPTIONS) + MALLOC_PERTURB_ 는 모든 메모리
+    # 접근에 shadow-memory 검사를 걸어 throughput 을 2~20배 떨어뜨리고, abort/halt
+    # 옵션 탓에 사소한 이슈에도 프로세스가 죽는다. 벤치마크 수치를 오염시키므로
+    # 평소엔 OFF. NCCL double-free 류를 다시 디버깅할 때만 아래 3줄을 임시로 켠다.
+    # export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$RUN_DIR/results/asan_prefill"
+    # export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
+    # export MALLOC_PERTURB_=$(( RANDOM % 256 ))
 
     export NCCL_CUMEM_ENABLE=0
     export NCCL_NET=Socket
 
-    echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
-    echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_prefill_*.log"
-    echo "[launch] ASAN logs → $RUN_DIR/results/asan_prefill*"
+    echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG (ASAN off for benchmarking)"
+    echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configA_prefill_*.log"
 
     CUDA_VISIBLE_DEVICES=0 \
     ${STRACE_CMD:-} vllm serve "${COMMON_FLAGS[@]}" \
@@ -412,19 +279,19 @@ configD_prefill() {
    "mem_pool_size_gb":"8"
  }}
 JSON
-)" 2>&1 | tee "$RUN_DIR/results/vllm_configD_prefill_$(hostname).log"
+)" 2>&1 | tee "$RUN_DIR/results/vllm_configA_prefill_$(hostname).log"
 }
 
 # 여기 Prefill ip넣어야함
-configD_decode() {
+configA_decode() {
     # PROXY_IP는 prefill/proxy 노드의 private IP여야 한다.
     # 상단 default가 VLLM_HOST_IP로 fallback되므로 자기 자신과 같으면 미설정으로 간주.
     if [[ -z "${PROXY_IP:-}" || "$PROXY_IP" == "$VLLM_HOST_IP" || "$PROXY_IP" == "127.0.0.1" ]]; then
-        echo "ERROR: Set PROXY_IP=<prefill-or-proxy-node-private-ip> before running configD decode"
+        echo "ERROR: Set PROXY_IP=<prefill-or-proxy-node-private-ip> before running configA decode"
         echo "       (PROXY_IP must point to the prefill/proxy node, not this decode node)"
         exit 1
     fi
-    echo "[launch] configD decode: TP=1, my_ip=$VLLM_HOST_IP, proxy=$PROXY_IP"
+    echo "[launch] configA decode: TP=1, my_ip=$VLLM_HOST_IP, proxy=$PROXY_IP"
     start_system_collectors
     start_s3_sync_daemon
 
@@ -439,17 +306,17 @@ configD_decode() {
     # Uncomment to enable strace output to file
     # STRACE_CMD="strace -e trace=memory,mmap,madvise -f -o $LOG_DIR/strace_decode_$(hostname)_$(date +%s).log"
 
-    # ─ Level 3: AddressSanitizer (memory debugging) ────────────────────────
-    export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$RUN_DIR/results/asan_decode"
-    export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
-    export MALLOC_PERTURB_=$(( RANDOM % 256 ))
+    # ─ AddressSanitizer (memory debugging) — throughput 측정에서는 끈다 ──────
+    # 이유는 configA_prefill 참고. 평소엔 OFF, NCCL 메모리 버그 디버깅 시에만 임시 ON.
+    # export ASAN_OPTIONS="detect_leaks=1:abort_on_error=1:halt_on_error=1:log_path=$RUN_DIR/results/asan_decode"
+    # export LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libasan.so.6
+    # export MALLOC_PERTURB_=$(( RANDOM % 256 ))
 
     export NCCL_CUMEM_ENABLE=0
     export NCCL_NET=Socket
 
-    echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG, ASAN enabled, LD_PRELOAD=$LD_PRELOAD"
-    echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configD_decode_*.log"
-    echo "[launch] ASAN logs → $RUN_DIR/results/asan_decode*"
+    echo "[launch] Debug env: NCCL_DEBUG=$NCCL_DEBUG (ASAN off for benchmarking)"
+    echo "[launch] NCCL logs → check 'double free' or 'Aborted' in vllm_configA_decode_*.log"
 
     CUDA_VISIBLE_DEVICES=0 \
     ${STRACE_CMD:-} vllm serve "${COMMON_FLAGS[@]}" \
@@ -475,7 +342,7 @@ configD_decode() {
    "mem_pool_size_gb":"8"
  }}
 JSON
-)" 2>&1 | tee "$RUN_DIR/results/vllm_configD_decode_$(hostname).log"
+)" 2>&1 | tee "$RUN_DIR/results/vllm_configA_decode_$(hostname).log"
 }
 
 # ── proxy launcher (shared by C1 and D) ──────────────────────────────────────
@@ -509,27 +376,10 @@ launch_proxy() {
 
 # ── dispatch ──────────────────────────────────────────────────────────────────
 case "$CONFIG" in
-    configA)  configA  ;;
-    configA1) configA1 ;;
-    configA2) configA2 ;;
-    configA3) configA3 ;;
-    configB)  configB  ;;
-    configC|configC1)
+    configA)
         case "$ROLE" in
-            prefill) configC1_prefill ;;
-            decode)  configC1_decode  ;;
-            proxy)   launch_proxy "$VLLM_HOST_IP" "$VLLM_HOST_IP" ;;
-            *) echo "configC1 needs role: prefill | decode | proxy"; exit 1 ;;
-        esac ;;
-    configC2)
-        case "$ROLE" in
-            prefill|decode|proxy) configC2_prefill ;;
-            *) echo "configC2 needs role: prefill | decode | proxy"; exit 1 ;;
-        esac ;;
-    configD)
-        case "$ROLE" in
-            prefill) configD_prefill ;;
-            decode)  configD_decode  ;;
+            prefill) configA_prefill ;;
+            decode)  configA_decode  ;;
             proxy)
                 # On the prefill node, point at itself for prefill and at
                 # DECODER_HOST for decode. PREFILL_HOST/DECODE_HOST overrides
@@ -538,10 +388,10 @@ case "$CONFIG" in
                 local_decode="${DECODE_HOST:-${DECODER_HOST:-127.0.0.1}}"
                 launch_proxy "$local_prefill" "$local_decode"
                 ;;
-            *) echo "configD needs role: prefill | decode | proxy"; exit 1 ;;
+            *) echo "configA needs role: prefill | decode | proxy"; exit 1 ;;
         esac ;;
     *)
-        echo "Unknown config: $CONFIG. Valid: configA configA1 configA2 configA3 configB configC configC1 configD"
-        echo "Note: configC2 (TP=1 PP=2 PD) is NOT supported on this branch."
+        echo "Unknown config: $CONFIG. Only configA is supported on this branch now."
+        echo "(GPU 종류 비교용 A/B/C 는 목적 재정의로 제거됨 — git history 참고.)"
         exit 1 ;;
 esac

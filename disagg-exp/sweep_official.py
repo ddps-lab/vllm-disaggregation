@@ -6,7 +6,8 @@ Drives the same workload grid as sweep.py but delegates each point to the
 official benchmark, then writes its result JSON under EXP_LOG_DIR/<config>/.
 
 Usage:
-    python disagg-exp/sweep_official.py --config A1 --base-url http://localhost:8000
+    python disagg-exp/sweep_official.py --config A --base-url http://localhost:8000 \
+        --decode-metrics-url http://<decode-host>:8200/metrics
 
 Env overrides (same names as sweep.py):
     # Note: PREFILL_LENS and DECODE_LENS combinations are now restricted to
@@ -65,8 +66,8 @@ LOG_DIR = os.environ.get("EXP_LOG_DIR", "./results")
 # launch_configs.sh on the server side. Edit this block (not env vars) when
 # switching models. These values are stamped into every result JSON's
 # metadata so analyze_official.py / S3 archive can identify the run later.
-MODEL_NAME = "qwen2.5-3b"                       # = --served-model-name on server
-MODEL_PATH = "Qwen/Qwen2.5-3B-Instruct"         # HF id, used as bench --tokenizer
+MODEL_NAME = "qwen3-4b"                         # = --served-model-name on server
+MODEL_PATH = "Qwen/Qwen3-4B"                    # HF id, used as bench --tokenizer
 MODEL_DTYPE = "half"                            # half | bfloat16 | float16
 
 # ── run identity ─────────────────────────────────────────────────────────────
@@ -655,7 +656,7 @@ async def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, help="A1|A2|A3|B|C1|C2|D|test|...")
+    parser.add_argument("--config", required=True, help="A|test|... (결과 폴더 라벨; 현재 실험은 A = g6.xlarge P1D1, 첫 실험)")
     parser.add_argument("--base-url", default="http://localhost:8000")
     parser.add_argument(
         "--health-timeout", type=int, default=600,
@@ -688,7 +689,7 @@ if __name__ == "__main__":
         "--decode-metrics-url",
         default=os.environ.get("DECODE_METRICS_URL", ""),
         help="Prometheus /metrics endpoint of the decode vLLM instance. "
-             "For configD, set this to http://<decode-host>:8200/metrics.",
+             "For configA (cross-node PD), set this to http://<decode-host>:8200/metrics.",
     )
     parser.add_argument(
         "--metrics-interval", type=float,

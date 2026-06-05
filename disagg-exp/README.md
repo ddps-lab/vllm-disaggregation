@@ -3,16 +3,27 @@
 > Branch: **`experiment/tier1-vllm-benchmark`** — vLLM upstream의 공식 도구만 사용.
 > 커스텀 connector / 커스텀 클라이언트 / 커스텀 분석 모두 제거. 위험 surface 최소화.
 
-vLLM fork (`releases/v0.21.0`) 기반의 prefill/decode disaggregation 비용대비가치 평가.
-모델 `Qwen/Qwen2.5-3B-Instruct` (FP16 / `--dtype half`, weights ~6GB, 양자화 미사용), 리전 us-west-2.
+vLLM fork (`releases/v0.21.0`) 기반의 prefill/decode disaggregation 분석.
+모델 `Qwen/Qwen3-4B` (FP16 / `--dtype half`, weights ~8GB, 양자화 미사용), 리전 us-west-2.
 
-> **모델 변경 이력 (2026-05)**: 기존 `meta-llama/Llama-3.1-8B-Instruct-AWQ-INT4` → `Qwen/Qwen2.5-3B-Instruct`.
-> 양자화 dequant 오버헤드/노이즈 제거, T4(16GB)/L4(24GB) 모두 native FP16 동작,
-> Llama-3.2-3B 와 함께 3B 급 표준 베이스라인이라 분석 비교 용이.
-
-> **핵심 질문**: 같은 예산이면 큰 GPU 한 장이 나은가, 작은 GPU 여러 장 + PD 분리가 나은가?
+> 🚨 **목적·범위 재정의 (2026-06) — 이 README 의 옛 6-config 내용보다 우선**
 >
-> 같은 워크로드를 6가지 토폴로지에 던지고 **TTFT / TPOT / $/M-tokens**로 비교한다.
+> **옛 설계(disaggregation 사용/미사용·GPU 종류 비교)** 의 6-config 비교는 폐기됐다
+> (§3·§7.2/§7.6 에 폐기 표기). 현재 목적은 disaggregation 안에서 **resource allocation /
+> parallelization 최적화를 위한 워크로드 분석**이고, 1단계로 **g6.xlarge P1D1 단일 config 만**
+> 측정한다. 이 단일 config 를
+> 첫 실험이라는 의미로 **`Config A`** 로 명명했다 (옛 7-config 의 A/B/C/D 라벨과 무관 —
+> 옛 cross-node PD "D" 가 곧 새 "A"). `launch_configs.sh` 의 옛 A/B/C 코드는 제거됐고
+> `configA` 만 남았다. **현재 기준 설계는 `노션.md` 가 canonical.** 아래 §7.4/§9 의
+> 명령·경로는 새 `configA` / `Qwen3-4B` 기준으로 갱신돼 있다.
+>
+> ⚠️ **P2pNcclConnector 는 PP / asymmetric TP 미지원** (`p2p_nccl_connector.py:546` 에서
+> `NotImplementedError`). 비율 기반 스케일링(③단계)에서 PP 는 불가하고, **decode 노드/인스턴스
+> 증설 또는 symmetric TP** 로만 가능. PP 가 필요하면 LMCache+NIXL 브랜치(`experiment/tier1`).
+
+> **모델 변경 이력**: `meta-llama/Llama-3.1-8B-Instruct-AWQ-INT4` → `Qwen/Qwen2.5-3B-Instruct`
+> (2026-05, 양자화 제거 + 8B OOM 회피) → **`Qwen/Qwen3-4B`** (2026-06, 굳이 낮은 버전을 쓸
+> 이유가 없어 버전만 최신화. 4B 라 옛 2.5-3B(~6GB)와 가중치 크기 비슷, fp16 ~8GB).
 
 ---
 
@@ -47,8 +58,9 @@ LLM 추론은 두 단계로 나뉜다:
 
 - **TP=N**: 한 레이어를 N개 GPU가 분담 (행렬 곱을 행/열로 자름). 통신 빈도 ↑, latency ↓.
 - **PP=N**: 레이어를 N개 GPU에 순차 배치. 통신 빈도 ↓, throughput ↑.
-- 3B FP16 (~6GB) 은 T4 16GB / L4 24GB 단독 모두 가능. TP/PP 비교는 모델 size
-  제약이 아니라 "여러 GPU 활용 vs 단일 GPU" 자체를 측정하는 게 목적.
+- Qwen3-4B FP16 (~8GB) 은 L4 24GB 단독에 충분히 올라감. TP/PP 비교는 모델 size
+  제약이 아니라 "여러 GPU 활용 vs 단일 GPU" 자체를 측정하는 게 목적. (단 이 nccl
+  브랜치는 PP 미지원 — symmetric TP 또는 노드 증설로만 스케일.)
 
 ### 2.3 P2pNcclConnector — 어떻게 작동하나
 
@@ -77,7 +89,7 @@ LLM 추론은 두 단계로 나뉜다:
 3. **`--no-enable-chunked-prefill` (Prefill + Decode 양쪽)** — Prefill 은 한 번에 prefill 해서 compute bound 측정. Decode 는 disagg 에서 실제로 prefill 안 하기 때문에 chunked prefill 옵션이 무의미 → 설정 비대칭 제거 목적으로 양쪽 모두 OFF.
 4. **CUDA Graph OFF (기본 `--enforce-eager`)** — P2pNcclConnector send/recv 와 graph capture 의 상호작용 가능성 제거. xpyd 업스트림 예제도 enforce-eager 사용. 필요 시 `ENFORCE_EAGER=0` env 로 graph 재활성화 가능.
 5. **`--max-num-seqs 512`** — 배치 제한을 풀어서 throughput 최대.
-6. **양자화 미사용** — 3B FP16 weights 가 T4/L4 모두에 native 로 들어가서 AWQ 등 dequant 단계 불필요. 양자화 노이즈 제거.
+6. **양자화 미사용** — Qwen3-4B FP16 weights (~8GB) 가 L4 24GB 에 native 로 들어가서 AWQ 등 dequant 단계 불필요. 양자화 노이즈 제거.
 7. **Greedy decoding 강제 (`temperature=0`, `top_p=1.0`)** — `vllm bench serve` 가 `--extra-body` 로 전달. 모델 `generation_config.json` 의 `temperature=0.7` 등 기본값을 override 해서 deterministic / reproducible 결과 보장.
 8. **`VLLM_DISABLE_REQUEST_ID_RANDOMIZATION=1`** — P2pNcclConnector 의 tensor_id 일치를 위해 필수. 자세한 내용은 §2.3 의 warning 참고.
 
@@ -90,33 +102,30 @@ LLM 추론은 두 단계로 나뉜다:
 
 ---
 
-## 3. 6가지 Config
+## 3. Config (현재: Config A 단독)
 
 | Config | Instance | GPU 구성 | Topology | $/hr OD |
 |---|---|---|---|---:|
-| **A1** | g4dn.12xlarge | 4× T4 16GB | Monolithic **TP=2 PP=2** | $3.91 |
-| **A2** | g4dn.12xlarge | 4× T4 16GB | Monolithic **TP=4 PP=1** | $3.91 |
-| **A3** | g4dn.12xlarge | 4× T4 16GB | Monolithic **TP=1 PP=4** | $3.91 |
-| **B**  | g6e.xlarge | 1× L40S 48GB | Monolithic TP=1 | $1.86 |
-| **C1** | g4dn.12xlarge | 4× T4 16GB | Same-node PD **TP=2 PP=1**: prefill GPU 0-1 + decode GPU 2-3 | $3.91 |
-| ~~**C2**~~ | ~~g4dn.12xlarge~~ | ~~4× T4~~ | ~~Same-node PD **TP=1 PP=2**~~ | ~~$3.91~~ |
-| **D**  | 2× g6.xlarge | 2× L4 24GB | Cross-node PD: prefill TP=1 + decode TP=1 | $1.61 |
+| **A** | 2× g6.xlarge | 2× L4 24GB | Cross-node PD (P1D1): prefill TP=1 PP=1 + decode TP=1 PP=1 | $1.61 |
 
-### ⚠️ configC2는 이 브랜치에서 NOT SUPPORTED
+1단계는 이 Config A 에서 워크로드별 **prefill throughput vs decode throughput 비율**을 측정한다.
+②단계에서 비율을 분석하고, ③단계에서 비율에 맞춰 **decode 노드/인스턴스 증설(또는 symmetric TP)** 로
+스케일한다.
 
-[p2p_nccl_connector.py:528-530](../vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_connector.py#L528-L530)에 명시:
-> "Currently, only symmetric TP is supported. Asymmetric TP, **PP**, and others will be supported in future PRs."
+> ⚠️ **P2pNcclConnector PP 미지원** — [p2p_nccl_connector.py:546](../vllm/distributed/kv_transfer/kv_connector/v1/p2p/p2p_nccl_connector.py#L546):
+> > "Currently, only symmetric TP is supported. Asymmetric TP, **PP**, and others will be supported in future PRs."
+>
+> 따라서 ③단계 스케일링에서 `prefill PP1 / decode PP3` 같은 **PP 방식은 이 브랜치에서 불가**.
+> PP 가 필요하면 `experiment/tier1` 브랜치(LMCache+NIXL) 사용.
 
-PP > 1 PD는 P2pNcclConnector가 거부. `launch_configs.sh`의 `configC2_*` 함수는 호출 시 exit 2로 종료.
-TP=1 PP=2 변형이 필요하면 **`experiment/tier1` 브랜치 (LMCache+NIXL)** 사용.
+<details><summary>📦 (옛 설계) 6-config GPU 종류 비교 — 폐기됨, 참고용</summary>
 
-### 비교 의미
+옛 목적은 "같은 예산이면 큰 GPU 한 장 vs 작은 GPU 여러 장 + PD 분리"였고 A1/A2/A3(g4dn 4×T4),
+B(g6e L40S), C1/C2(same-node PD), D(cross-node PD)의 6가지를 TTFT/TPOT/$/M-tokens 로 비교했다.
+목적 재정의(상단 배너)로 GPU 종류 비교용 config 는 모두 제거했고, 옛 D 만 새 A 로 남겼다.
+C2(TP=1 PP=2)는 어차피 P2pNcclConnector PP 미지원이라 불가였다.
 
-- **A1↔A2↔A3**: 동일 4× T4. Monolithic의 최적 TP/PP 탐색.
-- **A↔C1**: 동일 4× T4. Monolithic vs same-node PD → 순수 소프트웨어 비교.
-- **B↔A**: 큰 GPU 1장 vs 작은 GPU 4장 → 멀티-GPU 오버헤드.
-- **C1↔D**: 둘 다 PD. T4 PCIe/SHM vs L4 TCP → $/M-tokens 정규화.
-- **B↔D**: 비슷 가격대. 큰 GPU 1장 vs 작은 GPU 2장 + PD.
+</details>
 
 ---
 
@@ -160,18 +169,15 @@ disagg-exp/
 
 | 함수 | 역할 |
 |---|---|
-| `configA1/A2/A3()` | TP/PP 변형 monolithic, port 8000 |
-| `configB()` | TP=1 monolithic, port 8000 |
-| `configC1_prefill()` | TP=2 PP=1 (GPU 0-1), `kv_role=kv_producer`, port 8100, kv_port=14600 |
-| `configC1_decode()` | TP=2 PP=1 (GPU 2-3), `kv_role=kv_consumer`, port 8200, kv_port=14700 |
-| `configC2_*()` | **exit 2** with explanation (P2pNccl PP 미지원) |
-| `configD_prefill()` | TP=1, peer=`$DECODER_HOST`, port 8100 |
-| `configD_decode()` | TP=1, port 8200 |
+| `configA_prefill()` | TP=1 PP=1, peer=`$DECODER_HOST`, `kv_role=kv_producer`, port 8100, kv_port=14600 |
+| `configA_decode()` | TP=1 PP=1, `kv_role=kv_consumer`, port 8200, kv_port=14700 |
 | `launch_proxy()` | `benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py` (quart) |
+
+(옛 `configA1/A2/A3/B/C1/C2_*` 함수는 목적 재정의로 제거됨 — git history 참고.)
 
 공통 flag (`COMMON_FLAGS`):
 ```
---no-enable-prefix-caching --dtype half --served-model-name qwen2.5-3b
+--no-enable-prefix-caching --dtype half --served-model-name qwen3-4b
 --max-model-len $MAX_MODEL_LEN --gpu-memory-utilization $GPU_MEM_UTIL
 --max-num-seqs ${MAX_NUM_SEQS:-512}
 ```
@@ -189,20 +195,20 @@ NCCL_IB_DISABLE=1, NCCL_SOCKET_IFNAME=...   # NCCL transport 강제
 
 #### 4.2.1 실험 단위 폴더 구조 (RUN_DIR)
 `launch_configs.sh` 가 호출되면 자동으로 다음 폴더를 만들고 vllm 로그·proxy 로그·
-ASAN 로그·sweep 결과는 `results/`, 시스템 collector 출력은 `system_logs/` 에 떨어집니다.
+sweep 결과는 `results/`, 시스템 collector 출력은 `system_logs/` 에 떨어집니다.
+(ASAN 메모리 디버깅은 throughput 측정 오염 때문에 기본 OFF — 필요 시 launch script 에서 임시 활성화.)
 
 ```
-$EXP_LOG_DIR/{CONFIG}-{SERVED_MODEL_NAME}/      ← 예: ~/exp-logs/D-qwen2.5-3b/
+$EXP_LOG_DIR/{CONFIG}-{SERVED_MODEL_NAME}/      ← 예: ~/exp-logs/configA-qwen3-4b/
 ├── system_logs/
 │   ├── nvidia_smi.csv          (1Hz)
 │   ├── ifstat.csv              (1Hz)
 │   ├── dcgm.log                (2s scrape)
 │   └── clock_baseline_*.txt    (chrony 스냅샷)
 └── results/
-    ├── vllm_configD_prefill_<host>.log     (Prefill 노드만)
-    ├── vllm_configD_decode_<host>.log      (Decode 노드만)
+    ├── vllm_configA_prefill_<host>.log     (Prefill 노드만)
+    ├── vllm_configA_decode_<host>.log      (Decode 노드만)
     ├── pd_proxy_<host>.log                 (proxy 띄운 노드만)
-    ├── asan_prefill*.log
     ├── p2048_d64_r1.0.json                 (sweep 결과)
     ├── p2048_d64_r1.0.log
     ├── p2048_d64_r1.0.metrics.csv
@@ -238,8 +244,8 @@ s3://$S3_BUCKET/raw/official/{RUN_TAG}/{VLLM_HOST_IP}/{CONFIG}-{MODEL}/
 ```
 vllm bench serve \
   --backend openai --base-url <url> \
-  --endpoint /v1/completions --model qwen2.5-3b \
-  --tokenizer Qwen/Qwen2.5-3B-Instruct \
+  --endpoint /v1/completions --model qwen3-4b \
+  --tokenizer Qwen/Qwen3-4B \
   --dataset-name random --random-input-len $PL --random-output-len $DL \
   --random-range-ratio 0.0 \
   --num-prompts 300 --request-rate $RATE --burstiness 1.0 \
@@ -250,7 +256,7 @@ vllm bench serve \
   --result-dir $EXP_LOG_DIR/<config>/ \
   --result-filename p{prefill}_d{decode}_r{rate}.json \
   --metadata config=<C> prefill_len=<PL> decode_len=<DL> rate=<R> point_id=<id> \
-              model_path=Qwen/Qwen2.5-3B-Instruct dtype=half
+              model_path=Qwen/Qwen3-4B dtype=half
 ```
 *(주의: Proxy의 `max_tokens=1` 정책 충돌 우회 및 400 Bad Request 에러를 방지하기 위해 payload에서 `min_tokens` 주입을 제거하였습니다. 또한, Proxy 서버에 `/health` 엔드포인트가 없는 점을 고려하여 404/405 응답도 서버 활성화로 간주하도록 헬스체크가 수정되었습니다.)*
 
@@ -304,7 +310,7 @@ RPS / prefill_TPS / decode_TPS 가 분리되어 나옴.
 --decode-metrics-url    default: ""  (빈 값 → decode 측 스크래핑 비활성화)
 --metrics-interval      default: 1.0 (초)
 ```
-Cross-node config D 의 경우 sweep 이 Prefill 노드에서 도는 가정하에
+Cross-node config A 의 경우 sweep 이 Prefill 노드에서 도는 가정하에
 `--decode-metrics-url http://<decode-private-ip>:8200/metrics` 를 반드시 전달.
 
 ### 4.5 `analyze_official.py`
@@ -374,7 +380,7 @@ graph capture 의 상호작용 가능성 우려가 있어 **기본 OFF (`--enfor
 `launch_configs.sh` 의 `ENFORCE_EAGER` 기본값이 1 이라 그냥 `bash launch_configs.sh ...`
 하면 자동 적용. CUDA Graph 캡처 재활성화는:
 ```bash
-ENFORCE_EAGER=0 bash launch_configs.sh configC1 prefill
+ENFORCE_EAGER=0 bash launch_configs.sh configA prefill
 ```
 페널티는 per-step kernel launch overhead 만큼 (~5~15%) 이지만 양쪽 노드 동일하게
 적용되므로 P/D split 비교 자체에는 영향 X.
@@ -404,35 +410,12 @@ export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=$(ip route get 1 | awk '/dev/{print $5; exit}')
 ```
 
-### 7.2 Config A1/A2/A3/B — Monolithic
+### 7.2 (폐기) Config A1/A2/A3/B/C1/C2 — Monolithic / same-node PD
 
-```bash
-bash disagg-exp/launch_configs.sh configA1
-# (다른 터미널)
-python disagg-exp/sweep_official.py --config A1 --base-url http://localhost:8000
-```
+옛 GPU 종류 비교용 config 는 모두 제거됐다. 현재는 §7.4 Config A 만 사용한다.
+(과거 실행법이 필요하면 git history.)
 
-A2, A3, B 동일 패턴.
-
-### 7.3 Config C1 — Same-node PD (4× T4)
-
-**3개 터미널 필요. decode를 먼저 띄워야 ZMQ가 안정적으로 연결됨.**
-
-```bash
-# Terminal 1 — decode (먼저)
-bash disagg-exp/launch_configs.sh configC1 decode
-
-# Terminal 2 — prefill (decode가 "Application startup complete" 출력 후)
-bash disagg-exp/launch_configs.sh configC1 prefill
-
-# Terminal 3 — proxy (둘 다 ready 후)
-bash disagg-exp/launch_configs.sh configC1 proxy
-
-# Terminal 4 — sweep
-python disagg-exp/sweep_official.py --config C1 --base-url http://localhost:8000
-```
-
-### 7.4 Config D — Cross-node PD (2× g6.xlarge)
+### 7.4 Config A — Cross-node PD (2× g6.xlarge, P1D1)
 
 > **RUN_TAG 사용법 (한 줄)**: 새 실험 시작할 때 양쪽 노드에서
 > `export RUN_TAG=20260526-1530-baseline` 같이 **동일한 값**을 export. 그 뒤로는
@@ -450,10 +433,10 @@ export PROXY_IP=10.0.x.z           # ← prefill/proxy 노드의 private IP (필
 export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5     # 실제 NIC 이름으로
 
-bash disagg-exp/launch_configs.sh configD decode
+bash disagg-exp/launch_configs.sh configA decode
 # 시작 시 stdout 에서 확인:
 #   [launch] RUN_TAG=20260526-1530-baseline
-#   [launch] S3 dest=s3://.../raw/official/20260526-1530-baseline/10.0.x.y/D-qwen2.5-3b/
+#   [launch] S3 dest=s3://.../raw/official/20260526-1530-baseline/10.0.x.y/configA-qwen3-4b/
 ```
 
 **Prefill node:**
@@ -466,7 +449,7 @@ export DECODER_HOST=10.0.x.y       # decode 노드의 private IP
 export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=ens5
 
-bash disagg-exp/launch_configs.sh configD prefill
+bash disagg-exp/launch_configs.sh configA prefill
 ```
 
 **Prefill node (또 다른 터미널, 둘 다 ready 후):**
@@ -475,7 +458,7 @@ bash disagg-exp/launch_configs.sh configD prefill
 export RUN_TAG=20260526-1530-baseline
 
 # Proxy 띄우기 (이 셸도 자기 RUN_DIR 에 s3 sync 시작)
-bash disagg-exp/launch_configs.sh configD proxy
+bash disagg-exp/launch_configs.sh configA proxy
 ```
 
 **Prefill node (또또 다른 터미널, sweep):**
@@ -485,7 +468,7 @@ export VLLM_HOST_IP=10.0.x.z
 
 # Sweep — Decode 노드의 /metrics URL 을 반드시 전달 (per-side 측정용)
 .venv/bin/python disagg-exp/sweep_official.py \
-  --config D \
+  --config A \
   --base-url http://127.0.0.1:8000 \
   --decode-metrics-url http://10.0.x.y:8200/metrics
 # 또는 명시적으로 --run-tag 전달:
@@ -509,19 +492,13 @@ export VLLM_HOST_IP=10.0.x.z
 | DCGM | `curl -s localhost:9400/metrics \| grep DCGM_FI_DEV_FB_USED` → 라인 나옴 |
 | Chrony | `chronyc tracking` → offset 수십 ms 이내 |
 | NCCL transport | `NCCL_DEBUG=INFO` 한 번 켜서 첫 launch 로그 확인 → "Channel ... via SHM/IPC/SOCKET" 출력 |
-| Small sweep | `SWEEP_PREFILL_LENS=512 SWEEP_DECODE_LENS=128 SWEEP_RATES=1.0 SWEEP_NUM_PROMPTS=20 python sweep_official.py --config C1 ...` → JSON에 `completed > 0` |
+| Small sweep | `SWEEP_PREFILL_LENS=512 SWEEP_DECODE_LENS=128 SWEEP_RATES=1.0 SWEEP_NUM_PROMPTS=20 python sweep_official.py --config A ...` → JSON에 `completed > 0` |
 | **MAX_NUM_SEQS 민감도** | 위 small sweep을 `MAX_NUM_SEQS=256`으로도 한 번 → output_throughput 차이 < 10%면 512 안전. 큰 차이면 buffer pool 병목 의심 |
 
-### 7.6 Config C2 (PP=2 PD) 시도 시
+### 7.6 (폐기) Config C2 (PP=2 PD)
 
-```bash
-bash disagg-exp/launch_configs.sh configC2 prefill
-# [launch] configC2 is NOT supported with P2pNcclConnector (PP not implemented).
-#          Use experiment/tier1 branch (LMCache+NIXL) for the TP=1 PP=2 variant.
-# exit 2
-```
-
-함수는 코드 형태로 남아있지만 호출 시 즉시 종료. PP=2 변형이 필요하면 `experiment/tier1` 브랜치에서 LMCache+NIXL 경로로 측정.
+PP 변형은 P2pNcclConnector 미지원이라 애초에 불가했고, 해당 config 도 제거됐다.
+PP 가 필요하면 `experiment/tier1` 브랜치(LMCache+NIXL).
 
 ---
 
@@ -532,12 +509,8 @@ bash disagg-exp/launch_configs.sh configC2 prefill
 aws s3 sync s3://hdjung-disaggregation-result/raw/official/{RUN_TAG}/ ./data/{RUN_TAG}/
 # 예: aws s3 sync s3://hdjung-disaggregation-result/raw/official/20260526-1530-baseline/ ./data/20260526-1530-baseline/
 
-# 표 출력
-python disagg-exp/analyze_official.py --log-dir ./data --configs A1 A2 A3 B C1 D --plot
-
-# 커스텀 브랜치 결과와 cross-check
-python disagg-exp/analyze_official.py --log-dir ./data --configs C1 D \
-    --compare-custom /path/to/custom_branch_results/
+# 표 출력 (현재는 Config A 단일)
+python disagg-exp/analyze_official.py --log-dir ./data --configs A --plot
 ```
 
 `--plot`은 `(prefill, decode)` 조합별로 TTFT/TPOT/$/M-tokens 차트를 `plots_official/` 하위에 PNG로 저장.
@@ -549,16 +522,15 @@ python disagg-exp/analyze_official.py --log-dir ./data --configs C1 D \
 ### 9.1 로컬 (각 노드)
 ```
 $EXP_LOG_DIR/
-└── D-qwen2.5-3b/                              ← {CONFIG}-{SERVED_MODEL_NAME}
+└── configA-qwen3-4b/                          ← {CONFIG}-{SERVED_MODEL_NAME}
     ├── system_logs/
     │   ├── nvidia_smi.csv                     # 1Hz
     │   ├── ifstat.csv                         # 1Hz
     │   ├── dcgm.log                           # 2s scrape
     │   └── clock_baseline_<host>.txt          # chrony snapshot
     ├── results/
-    │   ├── vllm_configD_{prefill|decode}_<host>.log
+    │   ├── vllm_configA_{prefill|decode}_<host>.log
     │   ├── pd_proxy_<host>.log                # proxy 띄운 노드만
-    │   ├── asan_{prefill|decode}*.log         # ASAN 로그
     │   ├── p2048_d64_r1.0.json                # vllm bench serve 결과 (end-to-end)
     │   ├── p2048_d64_r1.0.log                 # bench subprocess stdout
     │   ├── p2048_d64_r1.0.metrics.csv         # /metrics scraper 시계열
@@ -572,11 +544,11 @@ $EXP_LOG_DIR/
 s3://hdjung-disaggregation-result/raw/official/
 └── {RUN_TAG}/                                  ← 예: 20260526-1530-baseline
     ├── 172.31.49.208/                          ← Prefill 노드 (VLLM_HOST_IP)
-    │   └── D-qwen2.5-3b/
+    │   └── configA-qwen3-4b/
     │       ├── system_logs/                    ← Prefill 노드의 시스템 로그
     │       └── results/                        ← Prefill 서버 로그 + proxy 로그 + sweep 결과 전부
     └── 172.31.48.200/                          ← Decode 노드 (VLLM_HOST_IP)
-        └── D-qwen2.5-3b/
+        └── configA-qwen3-4b/
             ├── system_logs/                    ← Decode 노드의 시스템 로그
             └── results/                        ← Decode 서버 로그만
 ```
@@ -611,6 +583,7 @@ S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{RUN_TAG}/{VLLM_
 
 | 커밋 | 내용 |
 |---|---|
+| (이번 변경) | **목적 재정의 + Config 단일화** — disaggregation 사용/미사용·GPU 종류 비교 → resource allocation/parallelization 최적화 워크로드 분석으로 목적 변경. 옛 A/B/C config 코드 제거, cross-node PD(옛 D)만 남겨 **`configA`** 로 rename. ASAN 디버그 instrumentation 제거(throughput 측정 오염 방지). **모델 `Qwen/Qwen2.5-3B-Instruct` → `Qwen/Qwen3-4B`**. PP 미지원(P2pNccl) 명시. |
 | (이번 변경) | **S3 폴더 구조 재설계** — `raw/official/{RUN_TAG}/{ip}/{config}-{model}/{system_logs,results}/`. Decode 노드도 background s5cmd sync 시작 → Decode 서버 log 도 S3 에 자동 업로드. setup.sh 의 collector 시작은 launch_configs.sh 로 이동 (실험 단위로 system_logs 분리). `RUN_TAG` env 도입 (기본 `YYYYMMDD-HHMM`). |
 | `0f7eb19ab` | **CUDA Graph 기본 비활성화** — P2pNcclConnector 안정성 우선. `ENFORCE_EAGER` 기본 1 |
 | `3c698c672` | **sweep 메트릭에 per-side RPS/TPS 추가** — `/metrics` scraper 도입. `{point}.metrics.csv` / `{point}.metrics.json` 자동 생성. `vllm:gpu_cache_usage_perc` → `vllm:kv_cache_usage_perc` 버그 fix |
@@ -625,6 +598,6 @@ S3 sync 경로: `s3://hdjung-disaggregation-result/raw/official/{RUN_TAG}/{VLLM_
 1. **Decode 가 첫 요청에서 영원히 hang** → §2.3 의 `VLLM_DISABLE_REQUEST_ID_RANDOMIZATION` warning 참고. `launch_configs.sh` 가 자동 export 하지만 직접 띄울 때는 명시 필요.
 2. **`{point}.metrics.json` 의 `decode_rps`/`decode_generation_tps` 가 `null`** → sweep 돌릴 때 `--decode-metrics-url` 누락. §7.4 참고.
 3. **NCCL handshake 후 hang** → CUDA Graph 잔재. `ENFORCE_EAGER=1` (기본값) 확실히 들어갔는지 vllm 로그 첫 줄에서 `enforce_eager=True` 확인.
-4. **결과 JSON 의 `model_id="qwen2.5-3b"` 만 보고 모델 식별 어려움** → metadata 의 `model_path`, `dtype` 같이 확인.
+4. **결과 JSON 의 `model_id="qwen3-4b"` 만 보고 모델 식별 어려움** → metadata 의 `model_path`, `dtype` 같이 확인.
 5. **S3 에 Prefill / Decode 폴더가 다른 RUN_TAG 로 갈라짐** → 양쪽 노드에서 export RUN_TAG 안 하고 default (분 단위 timestamp) 가 어긋난 경우. 둘 다 같은 분에 띄우지 못했다면 사후에 사람이 폴더 합치거나, 다음 실험 시 RUN_TAG 명시.
 6. **Decode 노드 vllm 서버 log 가 S3 에 없음** → Decode 노드에 s5cmd 미설치이거나 `S3_BUCKET=""` 으로 비활성화된 경우. setup.sh 가 s5cmd 자동 설치하므로 보통 자동 동작. 확인: Decode 노드에서 `command -v s5cmd && echo OK`.
