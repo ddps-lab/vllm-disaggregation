@@ -6,19 +6,13 @@
 vLLM fork (`releases/v0.21.0`) 기반의 prefill/decode disaggregation 분석.
 모델 `Qwen/Qwen3-4B` (FP16 / `--dtype half`, weights ~8GB, 양자화 미사용), 리전 us-west-2.
 
-> 🚨 **목적·범위 재정의 (2026-06) — 이 README 의 옛 6-config 내용보다 우선**
->
-> **옛 설계(disaggregation 사용/미사용·GPU 종류 비교)** 의 6-config 비교는 폐기됐다
-> (§3·§7.2/§7.6 에 폐기 표기). 현재 목적은 disaggregation 안에서 **resource allocation /
-> parallelization 최적화를 위한 워크로드 분석**이고, 1단계로 **g6.xlarge P1D1 단일 config 만**
-> 측정한다. 이 단일 config 를
-> 첫 실험이라는 의미로 **`Config A`** 로 명명했다 (옛 7-config 의 A/B/C/D 라벨과 무관 —
-> 옛 cross-node PD "D" 가 곧 새 "A"). `launch_configs.sh` 의 옛 A/B/C 코드는 제거됐고
-> `configA` 만 남았다. **현재 기준 설계는 `노션.md` 가 canonical.** 아래 §7.4/§9 의
-> 명령·경로는 새 `configA` / `Qwen3-4B` 기준으로 갱신돼 있다.
+> **목적**: disaggregation 안에서 **resource allocation / parallelization 최적화를 위한
+> 워크로드 분석**. 1단계로 **g6.xlarge P1D1 단일 config(`Config A`)** 에서 워크로드별
+> prefill/decode throughput 비율을 측정하고, 그 비율에 맞춰 이후 노드/병렬화를 늘린다.
+> 기준 설계는 `노션.md` 가 canonical.
 >
 > ⚠️ **P2pNcclConnector 는 PP / asymmetric TP 미지원** (`p2p_nccl_connector.py:546` 에서
-> `NotImplementedError`). 비율 기반 스케일링(③단계)에서 PP 는 불가하고, **decode 노드/인스턴스
+> `NotImplementedError`). 비율 기반 스케일링에서 PP 는 불가하고, **decode 노드/인스턴스
 > 증설 또는 symmetric TP** 로만 가능. PP 가 필요하면 LMCache+NIXL 브랜치(`experiment/tier1`).
 
 > **모델 변경 이력**: `meta-llama/Llama-3.1-8B-Instruct-AWQ-INT4` → `Qwen/Qwen2.5-3B-Instruct`
@@ -118,15 +112,6 @@ LLM 추론은 두 단계로 나뉜다:
 > 따라서 ③단계 스케일링에서 `prefill PP1 / decode PP3` 같은 **PP 방식은 이 브랜치에서 불가**.
 > PP 가 필요하면 `experiment/tier1` 브랜치(LMCache+NIXL) 사용.
 
-<details><summary>📦 (옛 설계) 6-config GPU 종류 비교 — 폐기됨, 참고용</summary>
-
-옛 목적은 "같은 예산이면 큰 GPU 한 장 vs 작은 GPU 여러 장 + PD 분리"였고 A1/A2/A3(g4dn 4×T4),
-B(g6e L40S), C1/C2(same-node PD), D(cross-node PD)의 6가지를 TTFT/TPOT/$/M-tokens 로 비교했다.
-목적 재정의(상단 배너)로 GPU 종류 비교용 config 는 모두 제거했고, 옛 D 만 새 A 로 남겼다.
-C2(TP=1 PP=2)는 어차피 P2pNcclConnector PP 미지원이라 불가였다.
-
-</details>
-
 ---
 
 ## 4. 파일 구성
@@ -172,8 +157,6 @@ disagg-exp/
 | `configA_prefill()` | TP=1 PP=1, peer=`$DECODER_HOST`, `kv_role=kv_producer`, port 8100, kv_port=14600 |
 | `configA_decode()` | TP=1 PP=1, `kv_role=kv_consumer`, port 8200, kv_port=14700 |
 | `launch_proxy()` | `benchmarks/disagg_benchmarks/disagg_prefill_proxy_server.py` (quart) |
-
-(옛 `configA1/A2/A3/B/C1/C2_*` 함수는 목적 재정의로 제거됨 — git history 참고.)
 
 공통 flag (`COMMON_FLAGS`):
 ```
@@ -410,12 +393,7 @@ export NCCL_IB_DISABLE=1
 export NCCL_SOCKET_IFNAME=$(ip route get 1 | awk '/dev/{print $5; exit}')
 ```
 
-### 7.2 (폐기) Config A1/A2/A3/B/C1/C2 — Monolithic / same-node PD
-
-옛 GPU 종류 비교용 config 는 모두 제거됐다. 현재는 §7.4 Config A 만 사용한다.
-(과거 실행법이 필요하면 git history.)
-
-### 7.4 Config A — Cross-node PD (2× g6.xlarge, P1D1)
+### 7.2 Config A — Cross-node PD (2× g6.xlarge, P1D1)
 
 > **RUN_TAG 사용법 (한 줄)**: 새 실험 시작할 때 양쪽 노드에서
 > `export RUN_TAG=20260526-1530-baseline` 같이 **동일한 값**을 export. 그 뒤로는
@@ -484,7 +462,7 @@ export VLLM_HOST_IP=10.0.x.z
 > 양쪽 노드에서 동일하게 export 한 다음 launch 다시 시작. 결과는 자동으로 다른
 > S3 폴더로 분리됨.
 
-### 7.5 첫 검증 단계 권장 사항
+### 7.3 첫 검증 단계 권장 사항
 
 | 체크 | 명령 / 기대값 |
 |---|---|
@@ -494,11 +472,6 @@ export VLLM_HOST_IP=10.0.x.z
 | NCCL transport | `NCCL_DEBUG=INFO` 한 번 켜서 첫 launch 로그 확인 → "Channel ... via SHM/IPC/SOCKET" 출력 |
 | Small sweep | `SWEEP_PREFILL_LENS=512 SWEEP_DECODE_LENS=128 SWEEP_RATES=1.0 SWEEP_NUM_PROMPTS=20 python sweep_official.py --config A ...` → JSON에 `completed > 0` |
 | **MAX_NUM_SEQS 민감도** | 위 small sweep을 `MAX_NUM_SEQS=256`으로도 한 번 → output_throughput 차이 < 10%면 512 안전. 큰 차이면 buffer pool 병목 의심 |
-
-### 7.6 (폐기) Config C2 (PP=2 PD)
-
-PP 변형은 P2pNcclConnector 미지원이라 애초에 불가했고, 해당 config 도 제거됐다.
-PP 가 필요하면 `experiment/tier1` 브랜치(LMCache+NIXL).
 
 ---
 
