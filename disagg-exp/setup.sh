@@ -73,17 +73,20 @@ NEED_LMCACHE=0
 if [[ -z "$LMCACHE_VER" ]]; then
     NEED_LMCACHE=1
 else
-    # require >= 0.3.9
+    # require >= 0.3.15
+    # (LMCacheMPConnector 가 import 하는 lmcache.integration.vllm.vllm_multi_process_adapter
+    #  모듈이 0.3.15 부터 존재. 0.3.9 엔 없어서 MP 커넥터 import 실패. 자세한 건
+    #  disagg-exp/병렬화-커넥터.md §7.5 참고. >= 0.3.15 면 fresh install 시 최신 0.4.x 로 해소.)
     python -c "
 from packaging.version import Version
 import sys
 v = '$LMCACHE_VER'
-if Version(v) < Version('0.3.9'):
+if Version(v) < Version('0.3.15'):
     sys.exit(1)
 " 2>/dev/null || NEED_LMCACHE=1
 fi
 if [[ $NEED_LMCACHE -eq 1 ]]; then
-    uv pip install "lmcache>=0.3.9"
+    uv pip install "lmcache>=0.3.15"
 fi
 
 # ── 5. misc python deps ───────────────────────────────────────────────────────
@@ -200,7 +203,7 @@ python -c "
 import vllm, lmcache
 from packaging.version import Version
 print(f'vllm={vllm.__version__}  lmcache={lmcache.__version__}')
-assert Version(lmcache.__version__) >= Version('0.3.9'), 'lmcache too old'
+assert Version(lmcache.__version__) >= Version('0.3.15'), 'lmcache too old (need >= 0.3.15 for LMCacheMPConnector)'
 print('OK: version check passed')
 "
 
