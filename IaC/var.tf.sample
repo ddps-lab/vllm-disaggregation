@@ -1,0 +1,65 @@
+variable "prefix" {
+  type = string
+  description = "The prefix to use for the infrastructure"
+  default = ""
+}
+
+variable "region" {
+  type = string
+  description = "The AWS region to deploy the infrastructure"
+  default = "us-west-2"
+}
+
+variable "awscli_profile" {
+  type = string
+  description = "The AWS CLI profile to use"
+  default = ""
+}
+
+variable "ami_id" {
+  type = string
+  description = "The AMI ID to use for the infrastructure"
+  default = ""
+}
+
+variable "key_name" {
+  type = string
+  description = "The key name to use for the infrastructure"
+  default = ""
+}
+
+variable "head_instance_type" {
+  type = string
+  description = "The instance type for the head node. Empty = no head instance"
+  default = "m5.large"
+}
+
+variable "root_volume_size" {
+  type        = number
+  description = "The root EBS volume size in GB for EC2 instances"
+  default     = 100
+}
+
+variable "spot_price" {
+  type        = string
+  description = "Max hourly price for spot workers. Empty = capped at on-demand price (recommended)"
+  default     = ""
+}
+
+variable "public_subnet_cidrs" {
+  type        = list(string)
+  description = "Public subnet CIDRs, one per AZ (10s = public tier; use 20s for a future private tier)"
+  default     = ["192.168.10.0/24", "192.168.11.0/24", "192.168.12.0/24", "192.168.13.0/24"]
+}
+
+variable "azs" {
+  type        = list(string)
+  description = "AZ suffixes appended to region (adjust for regions without c/d)"
+  default     = ["a", "b", "c", "d"]
+}
+
+variable "s3_bucket_names" {
+  type        = list(string)
+  description = "S3 buckets the instances can access. Empty = no S3 access"
+  default     = []
+}
