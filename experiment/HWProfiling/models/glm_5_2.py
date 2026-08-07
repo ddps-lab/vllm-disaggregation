@@ -15,7 +15,7 @@ FALLBACK = dict(
 
 
 def load_spec() -> ExpertSpec:
-    # model_type glm_moe_dsa uses DeepSeek-style config keys.
+    """Fetch the HF config (glm_moe_dsa = DeepSeek-style keys) into an ExpertSpec."""
     try:
         cfg = fetch_config(HF_REPO, trust_remote_code="auto")
     except Exception as e:

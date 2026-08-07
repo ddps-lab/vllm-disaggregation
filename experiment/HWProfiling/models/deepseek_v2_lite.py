@@ -25,6 +25,7 @@ def count_deepseek_moe_layers(cfg) -> int:
 
 
 def load_spec() -> ExpertSpec:
+    """Fetch the HF config and map its keys to an ExpertSpec (fallback on failure)."""
     try:
         cfg = fetch_config(HF_REPO, trust_remote_code=True)
     except Exception as e:

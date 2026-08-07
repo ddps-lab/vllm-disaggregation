@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "model": {
+    "key": "deepseek-v2-lite",
+    "hf_repo": "deepseek-ai/DeepSeek-V2-Lite",
+    "hidden_size": 2048,
+    "intermediate_size": 1408,
+    "num_experts": 64,
+    "top_k": 6,
+    "num_moe_layers": 26,
+    "n_shared_experts": 2,
+    "expert_cap": null,
+    "rotation_target": 26,
+    "config_source": "hf_autoconfig"
+  },
+  "environment": {
+    "timestamp_utc": "2026-08-07T07:28:03Z",
+    "instance_type": "g4dn.xlarge",
+    "instance_type_source": "imds",
+    "gpu_name": "Tesla T4",
+    "compute_capability": [
+      7,
+      5
+    ],
+    "l2_cache_bytes": 4194304,
+    "total_mem_bytes": 15637086208,
+    "torch_version": "2.11.0+cu130",
+    "cuda_version": "13.0",
+    "allow_fp16_reduced_precision_reduction": true,
+    "allow_tf32": false,
+    "dtype_fallback": false,
+    "dtype": "float16",
+    "silu_impl": "vllm_op",
+    "peaks": {
+      "gpu": "Tesla T4",
+      "tensor_tflops_dense": 65.0,
+      "hbm_gbps": 320.0,
+      "source": "NVIDIA T4 datasheet (FP16 TC 65 dense, GDDR6 320 GB/s)"
+    }
+  },
+  "run_config": {
+    "warmup": 10,
+    "iters": 50,
+    "batch_sizes": "auto (powers of 2 up to VRAM limit)",
+    "mem_budget_bytes": 12830837964,
+    "cooldown_s": 0.0
+  }
+}

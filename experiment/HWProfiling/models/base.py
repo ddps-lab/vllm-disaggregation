@@ -12,15 +12,15 @@ class ExpertSpec:
     intermediate_size: int  # I (routed expert FFN width)
     num_experts: int
     top_k: int
-    num_moe_layers: int  # replica rotation count (AFD-style layer streaming)
+    num_moe_layers: int  # expert rotation count (AFD-style layer streaming)
     n_shared_experts: int = 0  # shared expert FFN width = I * n_shared_experts
-    replica_cap: int | None = None  # cap rotation below num_moe_layers (huge experts)
+    expert_cap: int | None = None  # cap rotation below num_moe_layers (huge experts)
     config_source: str = "hf_autoconfig"
 
     @property
     def rotation_target(self) -> int:
-        if self.replica_cap is not None:
-            return min(self.num_moe_layers, self.replica_cap)
+        if self.expert_cap is not None:
+            return min(self.num_moe_layers, self.expert_cap)
         return self.num_moe_layers
 
 
@@ -46,6 +46,7 @@ def fetch_config(hf_repo: str, trust_remote_code: bool | str = False):
 
 
 def spec_from_fallback(model_key: str, hf_repo: str, fallback: dict, err) -> ExpertSpec:
+    """Build an ExpertSpec from hardcoded dims when the HF config fetch fails."""
     logger.warning(
         "%s: HF config fetch failed (%s) — using hardcoded fallback dims. "
         "Results JSON will record config_source=fallback_dims.",

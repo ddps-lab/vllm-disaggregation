@@ -4,8 +4,8 @@ MODEL_KEY = "mixtral-8x22b"
 HF_REPO = "mistralai/Mixtral-8x22B-Instruct-v0.1"
 
 # One expert is 604 MB (3*16384*6144 bf16) — rotating all 56 layers would need
-# 34+ GB of weights alone, so cap rotation at 8 replicas (4.8 GB, still >> 2xL2).
-REPLICA_CAP = 8
+# 34+ GB of weights alone, so cap rotation at 8 experts (4.8 GB, still >> 2xL2).
+EXPERT_CAP = 8
 
 FALLBACK = dict(
     hidden_size=6144,
@@ -14,11 +14,12 @@ FALLBACK = dict(
     top_k=2,
     num_moe_layers=56,
     n_shared_experts=0,
-    replica_cap=REPLICA_CAP,
+    expert_cap=EXPERT_CAP,
 )
 
 
 def load_spec() -> ExpertSpec:
+    """Fetch the HF config and map its keys to an ExpertSpec (fallback on failure)."""
     try:
         cfg = fetch_config(HF_REPO)
     except Exception as e:
@@ -32,5 +33,5 @@ def load_spec() -> ExpertSpec:
         top_k=cfg.num_experts_per_tok,
         num_moe_layers=cfg.num_hidden_layers,  # every Mixtral layer is MoE
         n_shared_experts=0,
-        replica_cap=REPLICA_CAP,
+        expert_cap=EXPERT_CAP,
     )

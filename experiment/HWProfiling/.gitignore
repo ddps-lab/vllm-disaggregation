@@ -1,0 +1,7 @@
+# Plots are regenerable from the CSVs — don't track them.
+*.png
+*.pdf
+
+# Un-ignore measurement data hidden by vLLM's root .gitignore (*.csv, *.log).
+!*.csv
+!*.log
