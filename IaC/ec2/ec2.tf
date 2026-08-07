@@ -57,12 +57,32 @@ resource "aws_spot_instance_request" "spot-worker" {
 # spot 요청의 tags 가 인스턴스로 전파되지 않으므로,
 # 기동된 인스턴스에 Name 태그를 직접 부착한다.
 # wait_for_fulfillment = true 라 apply 시점에 spot_instance_id 를 알 수 있다.
+# 인스턴스가 교체되면(수동 terminate 후 재이행 등) apply 를 다시 실행해야 재부착된다.
 resource "aws_ec2_tag" "spot-worker-name" {
   for_each = aws_spot_instance_request.spot-worker
 
   resource_id = each.value.spot_instance_id
   key         = "Name"
   value       = "${var.prefix}-spot-worker-${each.key}"
+}
+
+# 고정 IP: 인스턴스가 교체/재시작돼도 EIP 주소는 유지된다.
+# 교체 후 apply 를 실행하면 같은 EIP 가 새 인스턴스에 재연결된다.
+resource "aws_eip" "spot-worker" {
+  for_each = local.spot_instances
+
+  domain = "vpc"
+
+  tags = {
+    Name = "${var.prefix}-spot-worker-${each.key}"
+  }
+}
+
+resource "aws_eip_association" "spot-worker" {
+  for_each = aws_spot_instance_request.spot-worker
+
+  instance_id   = each.value.spot_instance_id
+  allocation_id = aws_eip.spot-worker[each.key].id
 }
 
 resource "aws_instance" "head-instance" {

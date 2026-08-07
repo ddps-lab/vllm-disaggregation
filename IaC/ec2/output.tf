@@ -49,10 +49,10 @@ output "spot_instance_ids" {
 }
 
 output "spot_instance_public_ips" {
-  description = "Map of spot public IPs by instance type and index"
+  description = "Map of spot fixed public IPs (EIP) by instance type and index"
   value = {
-    for key, req in aws_spot_instance_request.spot-worker :
-    key => req.public_ip
+    for key, eip in aws_eip.spot-worker :
+    key => eip.public_ip
   }
 }
 
