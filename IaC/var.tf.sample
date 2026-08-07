@@ -34,19 +34,23 @@ variable "head_instance_type" {
   default = "m5.large"
 }
 
-variable "instance_type_count" {
-  type        = map(number)
-  description = "On-demand workers: instance type => count. e.g. { \"g6.12xlarge\" = 2 }"
+# 워커 지정 방식: instance type => AZ suffix 리스트.
+# 리스트 길이 = 인스턴스 개수, 각 원소 = 해당 인스턴스의 AZ.
+# "" 는 기본 서브넷(var.azs 첫 번째 AZ). e.g. { "g6.xlarge" = ["a", "c"] }
+# 워커 식별자는 AZ별 순번이라 다른 AZ 항목을 지워도 남는 워커는 재생성되지 않는다.
+variable "instance_type_azs" {
+  type        = map(list(string))
+  description = "On-demand workers: instance type => list of AZ suffixes, one per instance"
   default     = {}
 }
 
 # persistent spot workers: 용량이 없어도 요청이 열린 채 유지되고,
 # 용량이 생기는 즉시 자동으로 기동된다 (terraform destroy 로 요청 취소).
-variable "spot_instance_type_count" {
-  type        = map(number)
-  description = "Persistent spot workers: instance type => count"
+variable "spot_instance_type_azs" {
+  type        = map(list(string))
+  description = "Persistent spot workers: instance type => list of AZ suffixes, one per instance"
   default = {
-    "g6.xlarge" = 1,
+    "g6.xlarge" = ["a", "a", "b"],
   }
 }
 

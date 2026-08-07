@@ -1,15 +1,18 @@
+# 키는 "<type>-<az>-<같은 (type, az) 안에서의 순번>" (e.g. "g6.xlarge-b-0").
+# 인덱스가 전체 리스트 위치가 아니라 AZ별 순번이므로, 리스트에서 다른 AZ 항목을
+# 지우거나 순서를 바꿔도 살아남는 인스턴스의 키가 유지된다 (재생성 방지).
 locals {
   instances = merge([
-    for instance_type, count in var.instance_type_count : {
-      for i in range(count) :
-      "${instance_type}-${i}" => instance_type
+    for instance_type, azs in var.instance_type_azs : {
+      for i, az in azs :
+      "${instance_type}-${az != "" ? az : "default"}-${length([for j in range(i) : j if azs[j] == az])}" => { type = instance_type, az = az }
     }
   ]...)
 
   spot_instances = merge([
-    for instance_type, count in var.spot_instance_type_count : {
-      for i in range(count) :
-      "${instance_type}-${i}" => instance_type
+    for instance_type, azs in var.spot_instance_type_azs : {
+      for i, az in azs :
+      "${instance_type}-${az != "" ? az : "default"}-${length([for j in range(i) : j if azs[j] == az])}" => { type = instance_type, az = az }
     }
   ]...)
 }
@@ -18,10 +21,10 @@ resource "aws_spot_instance_request" "spot-worker" {
   for_each = local.spot_instances
 
   ami                    = var.ami_id
-  instance_type          = each.value
+  instance_type          = each.value.type
   key_name               = var.key_name
   monitoring             = true
-  subnet_id              = var.subnet_id
+  subnet_id              = each.value.az != "" ? var.subnet_id_by_az[each.value.az] : var.subnet_id
   vpc_security_group_ids = [var.security_group_id]
 
   iam_instance_profile = var.s3_instance_profile_name
@@ -49,7 +52,7 @@ resource "aws_spot_instance_request" "spot-worker" {
   # 기동된 인스턴스에는 자동 전파되지 않는다 (아래 aws_ec2_tag 로 부착).
   tags = {
     Name         = "${var.prefix}-spot-worker-${each.key}"
-    InstanceType = each.value
+    InstanceType = each.value.type
     Index        = split("-", each.key)[length(split("-", each.key)) - 1]
   }
 }
@@ -117,10 +120,10 @@ resource "aws_instance" "worker-instance" {
   for_each = local.instances
 
   ami                    = var.ami_id
-  instance_type          = each.value
+  instance_type          = each.value.type
   key_name               = var.key_name
   monitoring             = true
-  subnet_id              = var.subnet_id
+  subnet_id              = each.value.az != "" ? var.subnet_id_by_az[each.value.az] : var.subnet_id
   vpc_security_group_ids = [var.security_group_id]
 
   iam_instance_profile = var.s3_instance_profile_name
@@ -131,7 +134,7 @@ resource "aws_instance" "worker-instance" {
 
   tags = {
     Name         = "${var.prefix}-worker-${each.key}"
-    InstanceType = each.value
+    InstanceType = each.value.type
     Index        = split("-", each.key)[length(split("-", each.key)) - 1]
   }
 }

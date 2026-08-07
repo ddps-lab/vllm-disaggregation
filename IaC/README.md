@@ -11,9 +11,14 @@ on-demand 워커에 더해 **persistent spot 워커**를 지원한다.
 
 ## 구성
 
-- spot 워커: `main.tf` 의 `spot_instance_type_count` 맵 (기본 `g4dn.xlarge` = T4 1대)
+- spot 워커: `var.tf` 의 `spot_instance_type_azs` 맵 — instance type => AZ suffix 리스트.
+  리스트 길이 = 개수, 각 원소 = 그 인스턴스의 AZ (`""` = 첫 번째 AZ).
+  e.g. `{ "g6.xlarge" = ["a", "c"] }` → us-west-2a 1대 + us-west-2c 1대
+- 워커 키는 `<type>-<az>-<AZ별 순번>` (e.g. `g6.xlarge-b-0`) 이므로,
+  일부 AZ 만 fulfill 됐을 때 안 뜬 AZ 항목만 지우고 다시 apply 하면
+  **떠 있는 인스턴스는 건드리지 않고** 나머지만 정리된다.
 - head 인스턴스 1대 (on-demand, 기본 `m5.large`, `head_instance_type = ""` 로 비우면 미생성)
-- on-demand 워커: `main.tf` 의 `instance_type_count` 맵
+- on-demand 워커: `var.tf` 의 `instance_type_azs` 맵 (형식 동일)
 
 ## 사용법
 

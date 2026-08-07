@@ -15,10 +15,11 @@ module "ec2" {
   head_instance_type       = var.head_instance_type
   security_group_id        = module.vpc.security_group_id
   subnet_id                = module.vpc.public_subnet_ids[0]
+  subnet_id_by_az          = { for i, az in var.azs : az => module.vpc.public_subnet_ids[i] }
   s3_instance_profile_name = aws_iam_instance_profile.s3-instance-profile.name
   root_volume_size         = var.root_volume_size
 
-  instance_type_count      = var.instance_type_count
-  spot_instance_type_count = var.spot_instance_type_count
-  spot_price               = var.spot_price
+  instance_type_azs      = var.instance_type_azs
+  spot_instance_type_azs = var.spot_instance_type_azs
+  spot_price             = var.spot_price
 }
