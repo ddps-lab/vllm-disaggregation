@@ -1,0 +1,82 @@
+2026-08-07 06:38:31,322 INFO mixtral-8x22b: K=6144 I=16384 experts=8 top_k=2 moe_layers=56 shared=0 rotation_target=8 (hf_autoconfig)
+2026-08-07 06:38:31,633 INFO routed M=1      w13_gemm     median=1.5452ms tflops=0.26 gbps=260.6
+2026-08-07 06:38:31,635 INFO routed M=1      silu_and_mul median=0.0148ms tflops=0.01 gbps=6.6
+2026-08-07 06:38:31,681 INFO routed M=1      w2_gemm      median=0.7752ms tflops=0.26 gbps=259.8
+2026-08-07 06:38:31,821 INFO routed M=1      full_chain   median=2.3235ms tflops=0.26 gbps=260.0
+2026-08-07 06:38:32,045 INFO routed M=2      w13_gemm     median=1.7214ms tflops=0.47 gbps=234.0
+2026-08-07 06:38:32,047 INFO routed M=2      silu_and_mul median=0.0143ms tflops=0.01 gbps=13.7
+2026-08-07 06:38:32,096 INFO routed M=2      w2_gemm      median=0.8028ms tflops=0.50 gbps=250.9
+2026-08-07 06:38:32,248 INFO routed M=2      full_chain   median=2.5252ms tflops=0.48 gbps=239.4
+2026-08-07 06:38:32,478 INFO routed M=4      w13_gemm     median=1.7172ms tflops=0.94 gbps=234.7
+2026-08-07 06:38:32,479 INFO routed M=4      silu_and_mul median=0.0143ms tflops=0.02 gbps=27.4
+2026-08-07 06:38:32,528 INFO routed M=4      w2_gemm      median=0.8038ms tflops=1.00 gbps=250.7
+2026-08-07 06:38:32,681 INFO routed M=4      full_chain   median=2.5242ms tflops=0.96 gbps=239.6
+2026-08-07 06:38:32,912 INFO routed M=8      w13_gemm     median=1.7178ms tflops=1.88 gbps=234.8
+2026-08-07 06:38:32,914 INFO routed M=8      silu_and_mul median=0.0164ms tflops=0.04 gbps=48.0
+2026-08-07 06:38:32,963 INFO routed M=8      w2_gemm      median=0.8069ms tflops=2.00 gbps=249.9
+2026-08-07 06:38:33,115 INFO routed M=8      full_chain   median=2.5293ms tflops=1.91 gbps=239.5
+2026-08-07 06:38:33,349 INFO routed M=16     w13_gemm     median=1.7336ms tflops=3.72 gbps=233.0
+2026-08-07 06:38:33,351 INFO routed M=16     silu_and_mul median=0.0163ms tflops=0.08 gbps=96.4
+2026-08-07 06:38:33,400 INFO routed M=16     w2_gemm      median=0.8131ms tflops=3.96 gbps=248.5
+2026-08-07 06:38:33,554 INFO routed M=16     full_chain   median=2.5508ms tflops=3.79 gbps=238.2
+2026-08-07 06:38:33,801 INFO routed M=32     w13_gemm     median=1.8821ms tflops=6.85 gbps=215.3
+2026-08-07 06:38:33,803 INFO routed M=32     silu_and_mul median=0.0164ms tflops=0.16 gbps=192.0
+2026-08-07 06:38:33,857 INFO routed M=32     w2_gemm      median=0.8735ms tflops=7.38 gbps=232.1
+2026-08-07 06:38:34,024 INFO routed M=32     full_chain   median=2.7674ms tflops=6.98 gbps=220.8
+2026-08-07 06:38:34,267 INFO routed M=64     w13_gemm     median=1.8452ms tflops=13.97 gbps=220.9
+2026-08-07 06:38:34,269 INFO routed M=64     silu_and_mul median=0.0195ms tflops=0.27 gbps=323.4
+2026-08-07 06:38:34,323 INFO routed M=64     w2_gemm      median=0.8847ms tflops=14.56 gbps=230.8
+2026-08-07 06:38:34,489 INFO routed M=64     full_chain   median=2.7566ms tflops=14.02 gbps=224.2
+2026-08-07 06:38:34,736 INFO routed M=128    w13_gemm     median=1.8903ms tflops=27.27 gbps=218.3
+2026-08-07 06:38:34,739 INFO routed M=128    silu_and_mul median=0.0522ms tflops=0.20 gbps=240.9
+2026-08-07 06:38:34,797 INFO routed M=128    w2_gemm      median=0.9508ms tflops=27.10 gbps=217.8
+2026-08-07 06:38:34,971 INFO routed M=128    full_chain   median=2.8836ms tflops=26.81 gbps=219.3
+2026-08-07 06:38:35,247 INFO routed M=256    w13_gemm     median=2.4663ms tflops=41.80 gbps=171.3
+2026-08-07 06:38:35,253 INFO routed M=256    silu_and_mul median=0.1014ms tflops=0.21 gbps=248.2
+2026-08-07 06:38:35,318 INFO routed M=256    w2_gemm      median=1.1295ms tflops=45.63 gbps=188.5
+2026-08-07 06:38:35,560 INFO routed M=256    full_chain   median=4.1313ms tflops=37.43 gbps=159.9
+2026-08-07 06:38:35,934 INFO routed M=512    w13_gemm     median=4.2491ms tflops=48.52 gbps=104.1
+2026-08-07 06:38:35,947 INFO routed M=512    silu_and_mul median=0.2130ms tflops=0.20 gbps=236.3
+2026-08-07 06:38:36,066 INFO routed M=512    w2_gemm      median=1.9528ms tflops=52.79 gbps=114.9
+2026-08-07 06:38:36,442 INFO routed M=512    full_chain   median=6.2193ms tflops=49.73 gbps=115.3
+2026-08-07 06:38:37,037 INFO routed M=1024   w13_gemm     median=7.7988ms tflops=52.87 gbps=61.8
+2026-08-07 06:38:37,063 INFO routed M=1024   silu_and_mul median=0.4270ms tflops=0.20 gbps=235.7
+2026-08-07 06:38:37,270 INFO routed M=1024   w2_gemm      median=3.5133ms tflops=58.68 gbps=70.4
+2026-08-07 06:38:37,979 INFO routed M=1024   full_chain   median=11.7187ms tflops=52.78 gbps=70.9
+2026-08-07 06:38:38,969 INFO routed M=2048   w13_gemm     median=13.9981ms tflops=58.91 gbps=40.2
+2026-08-07 06:38:39,021 INFO routed M=2048   silu_and_mul median=0.8571ms tflops=0.20 gbps=234.9
+2026-08-07 06:38:39,440 INFO routed M=2048   w2_gemm      median=6.9827ms tflops=59.05 gbps=42.0
+2026-08-07 06:38:40,753 INFO routed M=2048   full_chain   median=22.0467ms tflops=56.11 gbps=47.9
+2026-08-07 06:38:42,554 INFO routed M=4096   w13_gemm     median=26.8165ms tflops=61.50 gbps=26.9
+2026-08-07 06:38:42,658 INFO routed M=4096   silu_and_mul median=1.7167ms tflops=0.20 gbps=234.5
+2026-08-07 06:38:43,506 INFO routed M=4096   w2_gemm      median=14.0314ms tflops=58.77 gbps=27.5
+2026-08-07 06:38:46,042 INFO routed M=4096   full_chain   median=42.2431ms tflops=58.57 gbps=35.7
+2026-08-07 06:38:49,394 INFO routed M=8192   w13_gemm     median=51.6280ms tflops=63.89 gbps=20.1
+2026-08-07 06:38:49,600 INFO routed M=8192   silu_and_mul median=3.4304ms tflops=0.20 gbps=234.8
+2026-08-07 06:38:51,290 INFO routed M=8192   w2_gemm      median=28.3684ms tflops=58.14 gbps=20.1
+2026-08-07 06:38:56,284 INFO routed M=8192   full_chain   median=83.1171ms tflops=59.54 gbps=29.1
+2026-08-07 06:38:56,362 WARNING M=16384: clamping rotated layers 8 -> 7 (2.62 GB each, budget 19.91 GB)
+2026-08-07 06:39:02,827 INFO routed M=16384  w13_gemm     median=102.5526ms tflops=64.33 gbps=16.4
+2026-08-07 06:39:03,239 INFO routed M=16384  silu_and_mul median=6.8649ms tflops=0.20 gbps=234.6
+2026-08-07 06:39:06,649 INFO routed M=16384  w2_gemm      median=56.1710ms tflops=58.72 gbps=16.7
+2026-08-07 06:39:16,625 INFO routed M=16384  full_chain   median=166.1276ms tflops=59.57 gbps=25.4
+2026-08-07 06:39:16,697 WARNING M=32768: clamping rotated layers 8 -> 4 (4.63 GB each, budget 19.91 GB)
+2026-08-07 06:39:29,424 INFO routed M=32768  w13_gemm     median=204.9126ms tflops=64.39 gbps=14.4
+2026-08-07 06:39:30,248 INFO routed M=32768  silu_and_mul median=13.7272ms tflops=0.20 gbps=234.7
+2026-08-07 06:39:37,186 INFO routed M=32768  w2_gemm      median=115.4202ms tflops=57.16 gbps=14.5
+2026-08-07 06:39:57,307 INFO routed M=32768  full_chain   median=335.5648ms tflops=58.99 gbps=23.4
+2026-08-07 06:39:57,367 WARNING M=65536: clamping rotated layers 8 -> 2 (8.66 GB each, budget 19.91 GB)
+2026-08-07 06:40:22,878 INFO routed M=65536  w13_gemm     median=418.7351ms tflops=63.02 gbps=13.1
+2026-08-07 06:40:24,528 INFO routed M=65536  silu_and_mul median=27.4744ms tflops=0.20 gbps=234.5
+2026-08-07 06:40:39,074 INFO routed M=65536  w2_gemm      median=242.7418ms tflops=54.35 gbps=13.0
+2026-08-07 06:41:22,682 INFO routed M=65536  full_chain   median=735.7450ms tflops=53.81 gbps=20.5
+2026-08-07 06:41:22,732 WARNING M=131072: clamping rotated layers 8 -> 1 (16.71 GB each, budget 19.91 GB)
+2026-08-07 06:42:16,499 INFO routed M=131072 w13_gemm     median=888.4306ms tflops=59.40 gbps=11.9
+2026-08-07 06:42:19,796 INFO routed M=131072 silu_and_mul median=54.9407ms tflops=0.20 gbps=234.5
+2026-08-07 06:42:50,038 INFO routed M=131072 w2_gemm      median=504.3389ms tflops=52.32 gbps=12.1
+2026-08-07 06:44:13,716 INFO routed M=131072 full_chain   median=1370.1437ms tflops=57.79 gbps=21.6
+2026-08-07 06:44:13,761 WARNING M=262144: clamping rotated layers 8 -> 1 (32.82 GB each, budget 19.91 GB)
+2026-08-07 06:44:16,164 WARNING M=262144: OOM while allocating experts; proceeding with 0
+2026-08-07 06:44:16,182 INFO routed: VRAM limit at M=262144 — max M is 131072
+2026-08-07 06:44:16,182 INFO wrote /home/ubuntu/vllm-disaggregation/experiment/HWProfiling/results/mixtral-8x22b/g6.xlarge/config_20260807-063829.json
+2026-08-07 06:44:16,183 INFO wrote /home/ubuntu/vllm-disaggregation/experiment/HWProfiling/results/mixtral-8x22b/g6.xlarge/results_20260807-063829.csv

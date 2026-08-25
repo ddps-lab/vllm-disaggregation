@@ -1,0 +1,85 @@
+variable "prefix" {
+  type = string
+  description = "The prefix to use for the infrastructure"
+  default = ""
+}
+
+variable "region" {
+  type = string
+  description = "The AWS region to deploy the infrastructure"
+  default = "us-west-2"
+}
+
+variable "awscli_profile" {
+  type = string
+  description = "The AWS CLI profile to use"
+  default = ""
+}
+
+variable "ami_id" {
+  type = string
+  description = "The AMI ID to use for the infrastructure"
+  default = ""
+}
+
+variable "key_name" {
+  type = string
+  description = "The key name to use for the infrastructure"
+  default = ""
+}
+
+variable "head_instance_type" {
+  type = string
+  description = "The instance type for the head node. Empty = no head instance"
+  default = "m5.large"
+}
+
+# 워커 지정 방식: instance type => AZ suffix 리스트.
+# 리스트 길이 = 인스턴스 개수, 각 원소 = 해당 인스턴스의 AZ.
+# "" 는 기본 서브넷(var.azs 첫 번째 AZ). e.g. { "g6.xlarge" = ["a", "c"] }
+# 워커 식별자는 AZ별 순번이라 다른 AZ 항목을 지워도 남는 워커는 재생성되지 않는다.
+variable "instance_type_azs" {
+  type        = map(list(string))
+  description = "On-demand workers: instance type => list of AZ suffixes, one per instance"
+  default     = {}
+}
+
+# persistent spot workers: 용량이 없어도 요청이 열린 채 유지되고,
+# 용량이 생기는 즉시 자동으로 기동된다 (terraform destroy 로 요청 취소).
+variable "spot_instance_type_azs" {
+  type        = map(list(string))
+  description = "Persistent spot workers: instance type => list of AZ suffixes, one per instance"
+  default = {
+    "g6.xlarge" = ["a", "a", "b"],
+  }
+}
+
+variable "root_volume_size" {
+  type        = number
+  description = "The root EBS volume size in GB for EC2 instances"
+  default     = 100
+}
+
+variable "spot_price" {
+  type        = string
+  description = "Max hourly price for spot workers. Empty = capped at on-demand price (recommended)"
+  default     = ""
+}
+
+variable "public_subnet_cidrs" {
+  type        = list(string)
+  description = "Public subnet CIDRs, one per AZ (10s = public tier; use 20s for a future private tier)"
+  default     = ["192.168.10.0/24", "192.168.11.0/24", "192.168.12.0/24", "192.168.13.0/24"]
+}
+
+variable "azs" {
+  type        = list(string)
+  description = "AZ suffixes appended to region (adjust for regions without c/d)"
+  default     = ["a", "b", "c", "d"]
+}
+
+variable "s3_bucket_names" {
+  type        = list(string)
+  description = "S3 buckets the instances can access. Empty = no S3 access"
+  default     = []
+}

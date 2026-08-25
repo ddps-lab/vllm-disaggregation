@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "model": {
+    "key": "qwen3-30b-a3b",
+    "hf_repo": "Qwen/Qwen3-30B-A3B",
+    "hidden_size": 2048,
+    "intermediate_size": 768,
+    "num_experts": 128,
+    "top_k": 8,
+    "num_moe_layers": 48,
+    "n_shared_experts": 0,
+    "expert_cap": null,
+    "rotation_target": 48,
+    "config_source": "hf_autoconfig"
+  },
+  "environment": {
+    "timestamp_utc": "2026-08-07T06:45:11Z",
+    "instance_type": "g6.xlarge",
+    "instance_type_source": "imds",
+    "gpu_name": "NVIDIA L4",
+    "compute_capability": [
+      8,
+      9
+    ],
+    "l2_cache_bytes": 50331648,
+    "total_mem_bytes": 23661248512,
+    "torch_version": "2.11.0+cu130",
+    "cuda_version": "13.0",
+    "allow_fp16_reduced_precision_reduction": true,
+    "allow_tf32": false,
+    "dtype_fallback": false,
+    "dtype": "bfloat16",
+    "silu_impl": "vllm_op",
+    "peaks": {
+      "gpu": "NVIDIA L4",
+      "tensor_tflops_dense": 121.0,
+      "hbm_gbps": 300.0,
+      "source": "NVIDIA L4 datasheet (FP16 TC 121 dense / 242 sparse, GDDR6 300 GB/s)"
+    }
+  },
+  "run_config": {
+    "warmup": 10,
+    "iters": 50,
+    "batch_sizes": "auto (powers of 2 up to VRAM limit)",
+    "mem_budget_bytes": 19555896524,
+    "cooldown_s": 0.0
+  }
+}

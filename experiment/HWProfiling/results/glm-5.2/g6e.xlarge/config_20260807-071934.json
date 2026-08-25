@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "model": {
+    "key": "glm-5.2",
+    "hf_repo": "zai-org/GLM-5.2",
+    "hidden_size": 6144,
+    "intermediate_size": 2048,
+    "num_experts": 256,
+    "top_k": 8,
+    "num_moe_layers": 75,
+    "n_shared_experts": 1,
+    "expert_cap": null,
+    "rotation_target": 75,
+    "config_source": "hf_autoconfig"
+  },
+  "environment": {
+    "timestamp_utc": "2026-08-07T07:21:39Z",
+    "instance_type": "g6e.xlarge",
+    "instance_type_source": "imds",
+    "gpu_name": "NVIDIA L40S",
+    "compute_capability": [
+      8,
+      9
+    ],
+    "l2_cache_bytes": 100663296,
+    "total_mem_bytes": 47667740672,
+    "torch_version": "2.11.0+cu130",
+    "cuda_version": "13.0",
+    "allow_fp16_reduced_precision_reduction": true,
+    "allow_tf32": false,
+    "dtype_fallback": false,
+    "dtype": "bfloat16",
+    "silu_impl": "vllm_op",
+    "peaks": {
+      "gpu": "NVIDIA L40S",
+      "tensor_tflops_dense": 362.0,
+      "hbm_gbps": 864.0,
+      "source": "NVIDIA L40S datasheet (FP16 TC 362 dense / 733 sparse, GDDR6 864 GB/s)"
+    }
+  },
+  "run_config": {
+    "warmup": 10,
+    "iters": 50,
+    "batch_sizes": "auto (powers of 2 up to VRAM limit)",
+    "mem_budget_bytes": 39713469235,
+    "cooldown_s": 0.0
+  }
+}

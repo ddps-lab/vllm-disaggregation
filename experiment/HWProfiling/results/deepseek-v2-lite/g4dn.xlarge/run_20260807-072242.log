@@ -1,0 +1,179 @@
+2026-08-07 07:22:42,961 INFO deepseek-v2-lite: K=2048 I=1408 experts=64 top_k=6 moe_layers=26 shared=2 rotation_target=26 (hf_autoconfig)
+2026-08-07 07:22:43,006 INFO routed M=1      w13_gemm     median=0.0500ms tflops=0.23 gbps=231.0
+2026-08-07 07:22:43,008 INFO routed M=1      silu_and_mul median=0.0198ms tflops=0.00 gbps=0.4
+2026-08-07 07:22:43,011 INFO routed M=1      w2_gemm      median=0.0402ms tflops=0.14 gbps=143.8
+2026-08-07 07:22:43,017 INFO routed M=1      full_chain   median=0.0801ms tflops=0.22 gbps=216.3
+2026-08-07 07:22:43,064 INFO routed M=2      w13_gemm     median=0.0516ms tflops=0.45 gbps=223.9
+2026-08-07 07:22:43,066 INFO routed M=2      silu_and_mul median=0.0197ms tflops=0.00 gbps=0.9
+2026-08-07 07:22:43,069 INFO routed M=2      w2_gemm      median=0.0410ms tflops=0.28 gbps=141.1
+2026-08-07 07:22:43,075 INFO routed M=2      full_chain   median=0.0864ms tflops=0.40 gbps=200.9
+2026-08-07 07:22:43,118 INFO routed M=4      w13_gemm     median=0.0521ms tflops=0.89 gbps=222.0
+2026-08-07 07:22:43,120 INFO routed M=4      silu_and_mul median=0.0198ms tflops=0.00 gbps=1.7
+2026-08-07 07:22:43,123 INFO routed M=4      w2_gemm      median=0.0410ms tflops=0.56 gbps=141.4
+2026-08-07 07:22:43,129 INFO routed M=4      full_chain   median=0.0871ms tflops=0.80 gbps=199.9
+2026-08-07 07:22:43,171 INFO routed M=8      w13_gemm     median=0.0525ms tflops=1.76 gbps=221.2
+2026-08-07 07:22:43,173 INFO routed M=8      silu_and_mul median=0.0196ms tflops=0.00 gbps=3.4
+2026-08-07 07:22:43,176 INFO routed M=8      w2_gemm      median=0.0410ms tflops=1.13 gbps=142.2
+2026-08-07 07:22:43,182 INFO routed M=8      full_chain   median=0.0875ms tflops=1.58 gbps=200.0
+2026-08-07 07:22:43,224 INFO routed M=16     w13_gemm     median=0.0532ms tflops=3.47 gbps=219.5
+2026-08-07 07:22:43,226 INFO routed M=16     silu_and_mul median=0.0200ms tflops=0.01 gbps=6.7
+2026-08-07 07:22:43,229 INFO routed M=16     w2_gemm      median=0.0410ms tflops=2.25 gbps=143.2
+2026-08-07 07:22:43,235 INFO routed M=16     full_chain   median=0.0881ms tflops=3.14 gbps=201.0
+2026-08-07 07:22:43,278 INFO routed M=32     w13_gemm     median=0.0657ms tflops=5.62 gbps=180.3
+2026-08-07 07:22:43,280 INFO routed M=32     silu_and_mul median=0.0193ms tflops=0.01 gbps=14.0
+2026-08-07 07:22:43,284 INFO routed M=32     w2_gemm      median=0.0390ms tflops=4.73 gbps=153.5
+2026-08-07 07:22:43,291 INFO routed M=32     full_chain   median=0.1065ms tflops=5.20 gbps=170.0
+2026-08-07 07:22:43,344 INFO routed M=64     w13_gemm     median=0.0756ms tflops=9.77 gbps=160.8
+2026-08-07 07:22:43,346 INFO routed M=64     silu_and_mul median=0.0196ms tflops=0.02 gbps=27.7
+2026-08-07 07:22:43,349 INFO routed M=64     w2_gemm      median=0.0398ms tflops=9.26 gbps=155.9
+2026-08-07 07:22:43,357 INFO routed M=64     full_chain   median=0.1169ms tflops=9.47 gbps=161.7
+2026-08-07 07:22:43,406 INFO routed M=128    w13_gemm     median=0.0835ms tflops=17.68 gbps=153.0
+2026-08-07 07:22:43,408 INFO routed M=128    silu_and_mul median=0.0198ms tflops=0.05 gbps=54.7
+2026-08-07 07:22:43,412 INFO routed M=128    w2_gemm      median=0.0473ms tflops=15.61 gbps=140.7
+2026-08-07 07:22:43,420 INFO routed M=128    full_chain   median=0.1322ms tflops=16.76 gbps=155.1
+2026-08-07 07:22:43,475 INFO routed M=256    w13_gemm     median=0.1248ms tflops=23.65 gbps=112.3
+2026-08-07 07:22:43,478 INFO routed M=256    silu_and_mul median=0.0202ms tflops=0.09 gbps=107.1
+2026-08-07 07:22:43,482 INFO routed M=256    w2_gemm      median=0.0559ms tflops=26.42 gbps=134.9
+2026-08-07 07:22:43,494 INFO routed M=256    full_chain   median=0.2034ms tflops=21.78 gbps=116.6
+2026-08-07 07:22:43,564 INFO routed M=512    w13_gemm     median=0.2438ms tflops=24.22 gbps=67.7
+2026-08-07 07:22:43,566 INFO routed M=512    silu_and_mul median=0.0280ms tflops=0.13 gbps=154.3
+2026-08-07 07:22:43,572 INFO routed M=512    w2_gemm      median=0.0826ms tflops=35.77 gbps=112.7
+2026-08-07 07:22:43,598 INFO routed M=512    full_chain   median=0.3987ms tflops=22.23 gbps=75.6
+2026-08-07 07:22:43,678 INFO routed M=1024   w13_gemm     median=0.3017ms tflops=39.15 gbps=71.2
+2026-08-07 07:22:43,681 INFO routed M=1024   silu_and_mul median=0.0410ms tflops=0.18 gbps=211.2
+2026-08-07 07:22:43,694 INFO routed M=1024   w2_gemm      median=0.2014ms tflops=29.33 gbps=63.8
+2026-08-07 07:22:43,743 INFO routed M=1024   full_chain   median=0.8507ms tflops=20.84 gbps=50.5
+2026-08-07 07:22:43,857 INFO routed M=2048   w13_gemm     median=0.6823ms tflops=34.62 gbps=46.1
+2026-08-07 07:22:43,862 INFO routed M=2048   silu_and_mul median=0.0729ms tflops=0.20 gbps=237.3
+2026-08-07 07:22:43,904 INFO routed M=2048   w2_gemm      median=0.6972ms tflops=16.94 gbps=28.6
+2026-08-07 07:22:44,011 INFO routed M=2048   full_chain   median=1.7326ms tflops=20.46 gbps=39.6
+2026-08-07 07:22:44,226 INFO routed M=4096   w13_gemm     median=2.1960ms tflops=21.51 gbps=23.4
+2026-08-07 07:22:44,235 INFO routed M=4096   silu_and_mul median=0.1372ms tflops=0.21 gbps=252.1
+2026-08-07 07:22:44,301 INFO routed M=4096   w2_gemm      median=1.0922ms tflops=21.63 gbps=31.2
+2026-08-07 07:22:44,506 INFO routed M=4096   full_chain   median=3.3492ms tflops=21.17 gbps=35.8
+2026-08-07 07:22:44,918 INFO routed M=8192   w13_gemm     median=4.6611ms tflops=20.27 gbps=19.6
+2026-08-07 07:22:44,935 INFO routed M=8192   silu_and_mul median=0.2683ms tflops=0.21 gbps=258.0
+2026-08-07 07:22:45,072 INFO routed M=8192   w2_gemm      median=2.3224ms tflops=20.34 gbps=26.9
+2026-08-07 07:22:45,505 INFO routed M=8192   full_chain   median=7.1332ms tflops=19.88 gbps=31.2
+2026-08-07 07:22:46,201 INFO routed M=16384  w13_gemm     median=7.8389ms tflops=24.11 gbps=21.8
+2026-08-07 07:22:46,234 INFO routed M=16384  silu_and_mul median=0.5341ms tflops=0.22 gbps=259.2
+2026-08-07 07:22:46,472 INFO routed M=16384  w2_gemm      median=4.0312ms tflops=23.44 gbps=29.5
+2026-08-07 07:22:47,224 INFO routed M=16384  full_chain   median=12.3903ms tflops=22.89 gbps=34.6
+2026-08-07 07:22:47,381 WARNING M=32768: clamping rotated layers 26 -> 22 (0.56 GB each, budget 12.83 GB)
+2026-08-07 07:22:48,489 INFO routed M=32768  w13_gemm     median=15.8003ms tflops=23.92 gbps=20.9
+2026-08-07 07:22:48,554 INFO routed M=32768  silu_and_mul median=1.0661ms tflops=0.22 gbps=259.7
+2026-08-07 07:22:49,037 INFO routed M=32768  w2_gemm      median=8.2085ms tflops=23.02 gbps=28.3
+2026-08-07 07:22:50,538 INFO routed M=32768  full_chain   median=25.0573ms tflops=22.63 gbps=33.5
+2026-08-07 07:22:50,687 WARNING M=65536: clamping rotated layers 26 -> 11 (1.11 GB each, budget 12.83 GB)
+2026-08-07 07:22:52,864 INFO routed M=65536  w13_gemm     median=32.0997ms tflops=23.55 gbps=20.2
+2026-08-07 07:22:52,993 INFO routed M=65536  silu_and_mul median=2.1353ms tflops=0.22 gbps=259.3
+2026-08-07 07:22:53,968 INFO routed M=65536  w2_gemm      median=16.2672ms tflops=23.23 gbps=28.2
+2026-08-07 07:22:56,990 INFO routed M=65536  full_chain   median=50.3990ms tflops=22.51 gbps=33.0
+2026-08-07 07:22:57,090 WARNING M=131072: clamping rotated layers 26 -> 5 (2.20 GB each, budget 12.83 GB)
+2026-08-07 07:23:01,476 INFO routed M=131072 w13_gemm     median=68.2966ms tflops=22.14 gbps=18.8
+2026-08-07 07:23:01,734 INFO routed M=131072 silu_and_mul median=4.3098ms tflops=0.21 gbps=256.9
+2026-08-07 07:23:03,677 INFO routed M=131072 w2_gemm      median=32.5127ms tflops=23.25 gbps=28.0
+2026-08-07 07:23:09,921 INFO routed M=131072 full_chain   median=104.0349ms tflops=21.81 gbps=31.8
+2026-08-07 07:23:09,990 WARNING M=262144: clamping rotated layers 26 -> 2 (4.38 GB each, budget 12.83 GB)
+2026-08-07 07:23:18,651 INFO routed M=262144 w13_gemm     median=131.7567ms tflops=22.95 gbps=19.4
+2026-08-07 07:23:19,170 INFO routed M=262144 silu_and_mul median=8.6876ms tflops=0.21 gbps=254.9
+2026-08-07 07:23:23,065 INFO routed M=262144 w2_gemm      median=65.0091ms tflops=23.26 gbps=28.0
+2026-08-07 07:23:35,375 INFO routed M=262144 full_chain   median=204.7349ms tflops=22.16 gbps=32.2
+2026-08-07 07:23:35,428 WARNING M=524288: clamping rotated layers 26 -> 1 (8.74 GB each, budget 12.83 GB)
+2026-08-07 07:23:53,381 INFO routed M=524288 w13_gemm     median=295.5872ms tflops=20.46 gbps=17.3
+2026-08-07 07:23:54,420 INFO routed M=524288 silu_and_mul median=17.3720ms tflops=0.21 gbps=255.0
+2026-08-07 07:24:02,219 INFO routed M=524288 w2_gemm      median=130.0402ms tflops=23.25 gbps=27.9
+2026-08-07 07:24:28,448 INFO routed M=524288 full_chain   median=437.9435ms tflops=20.72 gbps=30.1
+2026-08-07 07:24:28,499 WARNING M=1048576: clamping rotated layers 26 -> 1 (17.47 GB each, budget 12.83 GB)
+2026-08-07 07:24:28,917 WARNING M=1048576: OOM while allocating experts; proceeding with 0
+2026-08-07 07:24:28,927 INFO routed: VRAM limit at M=1048576 — max M is 524288
+2026-08-07 07:24:28,979 INFO shared M=1      w13_gemm     median=0.1229ms tflops=0.19 gbps=187.9
+2026-08-07 07:24:28,981 INFO shared M=1      silu_and_mul median=0.0196ms tflops=0.00 gbps=0.9
+2026-08-07 07:24:28,986 INFO shared M=1      w2_gemm      median=0.0695ms tflops=0.17 gbps=166.0
+2026-08-07 07:24:28,998 INFO shared M=1      full_chain   median=0.1925ms tflops=0.18 gbps=180.0
+2026-08-07 07:24:29,082 INFO shared M=2      w13_gemm     median=0.1276ms tflops=0.36 gbps=181.1
+2026-08-07 07:24:29,084 INFO shared M=2      silu_and_mul median=0.0209ms tflops=0.00 gbps=1.6
+2026-08-07 07:24:29,090 INFO shared M=2      w2_gemm      median=0.0782ms tflops=0.29 gbps=147.7
+2026-08-07 07:24:29,103 INFO shared M=2      full_chain   median=0.2074ms tflops=0.33 gbps=167.3
+2026-08-07 07:24:29,193 INFO shared M=4      w13_gemm     median=0.1270ms tflops=0.73 gbps=182.2
+2026-08-07 07:24:29,195 INFO shared M=4      silu_and_mul median=0.0192ms tflops=0.00 gbps=3.5
+2026-08-07 07:24:29,200 INFO shared M=4      w2_gemm      median=0.0640ms tflops=0.72 gbps=180.9
+2026-08-07 07:24:29,210 INFO shared M=4      full_chain   median=0.1660ms tflops=0.83 gbps=209.5
+2026-08-07 07:24:29,278 INFO shared M=8      w13_gemm     median=0.0995ms tflops=1.85 gbps=233.1
+2026-08-07 07:24:29,280 INFO shared M=8      silu_and_mul median=0.0190ms tflops=0.01 gbps=7.1
+2026-08-07 07:24:29,284 INFO shared M=8      w2_gemm      median=0.0612ms tflops=1.51 gbps=189.7
+2026-08-07 07:24:29,295 INFO shared M=8      full_chain   median=0.1629ms tflops=1.70 gbps=214.5
+2026-08-07 07:24:29,362 INFO shared M=16     w13_gemm     median=0.1007ms tflops=3.67 gbps=231.6
+2026-08-07 07:24:29,364 INFO shared M=16     silu_and_mul median=0.0189ms tflops=0.01 gbps=14.3
+2026-08-07 07:24:29,369 INFO shared M=16     w2_gemm      median=0.0635ms tflops=2.91 gbps=184.1
+2026-08-07 07:24:29,379 INFO shared M=16     full_chain   median=0.1678ms tflops=3.30 gbps=210.3
+2026-08-07 07:24:29,444 INFO shared M=32     w13_gemm     median=0.1273ms tflops=5.80 gbps=185.0
+2026-08-07 07:24:29,446 INFO shared M=32     silu_and_mul median=0.0191ms tflops=0.02 gbps=28.3
+2026-08-07 07:24:29,452 INFO shared M=32     w2_gemm      median=0.0754ms tflops=4.89 gbps=157.0
+2026-08-07 07:24:29,465 INFO shared M=32     full_chain   median=0.2082ms tflops=5.32 gbps=172.6
+2026-08-07 07:24:29,530 INFO shared M=64     w13_gemm     median=0.1276ms tflops=11.57 gbps=188.5
+2026-08-07 07:24:29,532 INFO shared M=64     silu_and_mul median=0.0193ms tflops=0.05 gbps=56.1
+2026-08-07 07:24:29,537 INFO shared M=64     w2_gemm      median=0.0789ms tflops=9.35 gbps=154.0
+2026-08-07 07:24:29,551 INFO shared M=64     full_chain   median=0.2150ms tflops=10.30 gbps=173.4
+2026-08-07 07:24:29,626 INFO shared M=128    w13_gemm     median=0.1517ms tflops=19.47 gbps=165.0
+2026-08-07 07:24:29,629 INFO shared M=128    silu_and_mul median=0.0195ms tflops=0.09 gbps=110.8
+2026-08-07 07:24:29,634 INFO shared M=128    w2_gemm      median=0.0779ms tflops=18.96 gbps=164.1
+2026-08-07 07:24:29,649 INFO shared M=128    full_chain   median=0.2417ms tflops=18.34 gbps=165.4
+2026-08-07 07:24:29,735 INFO shared M=256    w13_gemm     median=0.2107ms tflops=28.03 gbps=128.1
+2026-08-07 07:24:29,737 INFO shared M=256    silu_and_mul median=0.0267ms tflops=0.13 gbps=162.0
+2026-08-07 07:24:29,746 INFO shared M=256    w2_gemm      median=0.1331ms tflops=22.18 gbps=105.4
+2026-08-07 07:24:29,774 INFO shared M=256    full_chain   median=0.5147ms tflops=17.22 gbps=88.1
+2026-08-07 07:24:29,870 INFO shared M=512    w13_gemm     median=0.3485ms tflops=33.89 gbps=88.7
+2026-08-07 07:24:29,873 INFO shared M=512    silu_and_mul median=0.0376ms tflops=0.19 gbps=230.1
+2026-08-07 07:24:29,887 INFO shared M=512    w2_gemm      median=0.2312ms tflops=25.54 gbps=71.4
+2026-08-07 07:24:29,938 INFO shared M=512    full_chain   median=0.8778ms tflops=20.19 gbps=63.9
+2026-08-07 07:24:30,067 INFO shared M=1024   w13_gemm     median=0.6945ms tflops=34.01 gbps=55.9
+2026-08-07 07:24:30,072 INFO shared M=1024   silu_and_mul median=0.0762ms tflops=0.19 gbps=227.0
+2026-08-07 07:24:30,116 INFO shared M=1024   w2_gemm      median=0.7113ms tflops=16.61 gbps=30.2
+2026-08-07 07:24:30,230 INFO shared M=1024   full_chain   median=1.8266ms tflops=19.41 gbps=42.5
+2026-08-07 07:24:30,447 INFO shared M=2048   w13_gemm     median=2.0581ms tflops=22.96 gbps=26.5
+2026-08-07 07:24:30,455 INFO shared M=2048   silu_and_mul median=0.1376ms tflops=0.21 gbps=251.4
+2026-08-07 07:24:30,521 INFO shared M=2048   w2_gemm      median=1.1256ms tflops=20.99 gbps=27.9
+2026-08-07 07:24:30,717 INFO shared M=2048   full_chain   median=3.2259ms tflops=21.98 gbps=37.4
+2026-08-07 07:24:31,089 INFO shared M=4096   w13_gemm     median=3.9339ms tflops=24.02 gbps=21.9
+2026-08-07 07:24:31,106 INFO shared M=4096   silu_and_mul median=0.2681ms tflops=0.22 gbps=258.1
+2026-08-07 07:24:31,235 INFO shared M=4096   w2_gemm      median=2.2835ms tflops=20.69 gbps=22.5
+2026-08-07 07:24:31,622 INFO shared M=4096   full_chain   median=6.3222ms tflops=22.43 gbps=32.7
+2026-08-07 07:24:32,294 INFO shared M=8192   w13_gemm     median=7.8375ms tflops=24.11 gbps=19.0
+2026-08-07 07:24:32,327 INFO shared M=8192   silu_and_mul median=0.5284ms tflops=0.22 gbps=262.0
+2026-08-07 07:24:32,591 INFO shared M=8192   w2_gemm      median=4.5499ms tflops=20.77 gbps=20.1
+2026-08-07 07:24:33,369 INFO shared M=8192   full_chain   median=12.8525ms tflops=22.06 gbps=29.5
+2026-08-07 07:24:34,621 INFO shared M=16384  w13_gemm     median=15.7949ms tflops=23.93 gbps=17.4
+2026-08-07 07:24:34,685 INFO shared M=16384  silu_and_mul median=1.0489ms tflops=0.22 gbps=263.9
+2026-08-07 07:24:35,152 INFO shared M=16384  w2_gemm      median=7.8595ms tflops=24.04 gbps=21.7
+2026-08-07 07:24:36,628 INFO shared M=16384  full_chain   median=24.6914ms tflops=22.97 gbps=29.3
+2026-08-07 07:24:36,770 WARNING M=32768: clamping rotated layers 26 -> 14 (0.86 GB each, budget 12.83 GB)
+2026-08-07 07:24:38,847 INFO shared M=32768  w13_gemm     median=31.8228ms tflops=23.75 gbps=16.5
+2026-08-07 07:24:38,974 INFO shared M=32768  silu_and_mul median=2.0951ms tflops=0.22 gbps=264.3
+2026-08-07 07:24:39,925 INFO shared M=32768  w2_gemm      median=16.0142ms tflops=23.60 gbps=20.6
+2026-08-07 07:24:42,900 INFO shared M=32768  full_chain   median=49.4620ms tflops=22.93 gbps=28.5
+2026-08-07 07:24:43,014 WARNING M=65536: clamping rotated layers 26 -> 7 (1.68 GB each, budget 12.83 GB)
+2026-08-07 07:24:47,279 INFO shared M=65536  w13_gemm     median=67.1810ms tflops=22.50 gbps=15.3
+2026-08-07 07:24:47,532 INFO shared M=65536  silu_and_mul median=4.2060ms tflops=0.22 gbps=263.3
+2026-08-07 07:24:49,494 INFO shared M=65536  w2_gemm      median=32.6259ms tflops=23.17 gbps=19.9
+2026-08-07 07:24:55,670 INFO shared M=65536  full_chain   median=102.8384ms tflops=22.06 gbps=27.1
+2026-08-07 07:24:55,744 WARNING M=131072: clamping rotated layers 26 -> 3 (3.32 GB each, budget 12.83 GB)
+2026-08-07 07:25:04,613 INFO shared M=131072 w13_gemm     median=143.4470ms tflops=21.08 gbps=14.2
+2026-08-07 07:25:05,119 INFO shared M=131072 silu_and_mul median=8.4493ms tflops=0.22 gbps=262.1
+2026-08-07 07:25:09,282 INFO shared M=131072 w2_gemm      median=69.7304ms tflops=21.68 gbps=18.5
+2026-08-07 07:25:22,391 INFO shared M=131072 full_chain   median=218.9028ms tflops=20.73 gbps=25.3
+2026-08-07 07:25:22,454 WARNING M=262144: clamping rotated layers 26 -> 1 (6.61 GB each, budget 12.83 GB)
+2026-08-07 07:25:40,357 INFO shared M=262144 w13_gemm     median=295.4217ms tflops=20.47 gbps=13.7
+2026-08-07 07:25:41,370 INFO shared M=262144 silu_and_mul median=16.9034ms tflops=0.22 gbps=262.0
+2026-08-07 07:25:48,972 INFO shared M=262144 w2_gemm      median=126.7282ms tflops=23.86 gbps=20.2
+2026-08-07 07:26:14,916 INFO shared M=262144 full_chain   median=434.2764ms tflops=20.90 gbps=25.4
+2026-08-07 07:26:14,969 WARNING M=524288: clamping rotated layers 26 -> 1 (13.19 GB each, budget 12.83 GB)
+2026-08-07 07:26:51,112 INFO shared M=524288 w13_gemm     median=598.1918ms tflops=20.22 gbps=13.5
+2026-08-07 07:26:53,139 INFO shared M=524288 silu_and_mul median=33.8073ms tflops=0.22 gbps=262.0
+2026-08-07 07:27:09,096 INFO shared M=524288 w2_gemm      median=266.0648ms tflops=22.73 gbps=19.2
+2026-08-07 07:28:02,623 INFO shared M=524288 full_chain   median=893.1397ms tflops=20.32 gbps=24.7
+2026-08-07 07:28:02,670 WARNING M=1048576: clamping rotated layers 26 -> 1 (26.34 GB each, budget 12.83 GB)
+2026-08-07 07:28:03,248 WARNING M=1048576: OOM while allocating experts; proceeding with 0
+2026-08-07 07:28:03,252 INFO shared: VRAM limit at M=1048576 — max M is 524288
+2026-08-07 07:28:03,252 INFO wrote /home/ubuntu/vllm-disaggregation/experiment/HWProfiling/results/deepseek-v2-lite/g4dn.xlarge/config_20260807-072242.json
+2026-08-07 07:28:03,255 INFO wrote /home/ubuntu/vllm-disaggregation/experiment/HWProfiling/results/deepseek-v2-lite/g4dn.xlarge/results_20260807-072242.csv
