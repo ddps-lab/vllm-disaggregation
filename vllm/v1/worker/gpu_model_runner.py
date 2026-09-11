@@ -3978,7 +3978,7 @@ class GPUModelRunner(
         Returns:
             Model output tensor
         """
-        return self.model(
+        return self.model( # 12. 모델 추론 따라오면 여기로 올텐데 self.model은 서버 시작시 qwen3moe를 보고 만든 객체인 Qwen3MoeForCausalLM가 들어가있고 그래서 괄호 호출이 torch의 Module.__call__을 거쳐 그 객체 메소드인 forward로 들어감 그래서 여기부턴 qwen3moe.py로 넘어감
             input_ids=input_ids,
             positions=positions,
             intermediate_tensors=intermediate_tensors,
@@ -4319,13 +4319,13 @@ class GPUModelRunner(
             assert kv_connector_metadata is not None
             get_kv_transfer_group().handle_preemptions(kv_connector_metadata)
 
-        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens
+        num_scheduled_tokens = scheduler_output.total_num_scheduled_tokens # 7. 여기서 스케쥴한 총 토큰수 변수에 저장
         with (
             record_function_or_nullcontext("gpu_model_runner: preprocess"),
             self.synchronize_input_prep(),
         ):
             # Update persistent batch states.
-            deferred_state_corrections_fn = self._update_states(scheduler_output)
+            deferred_state_corrections_fn = self._update_states(scheduler_output) # 8. 총 토큰수를 worker에서 다루기위해 다시 복사 
 
             if has_ec_transfer() and not get_ec_transfer().is_consumer:
                 with self.maybe_get_ec_connector_output(
@@ -4368,7 +4368,7 @@ class GPUModelRunner(
             num_tokens_unpadded = scheduler_output.total_num_scheduled_tokens
 
             logits_indices, spec_decode_metadata, max_num_sampled_tokens = (
-                self._prepare_inputs(scheduler_output, num_scheduled_tokens_np)
+                self._prepare_inputs(scheduler_output, num_scheduled_tokens_np) # 9. GPU버퍼에 이번 토큰들의 메타데이터(position, 이번 스텝 토큰 id, 요청별 kv 캐시 블록 경계선)등등을 저장
             )
 
             cascade_attn_prefix_lens = None
@@ -4387,7 +4387,7 @@ class GPUModelRunner(
                 should_ubatch,
                 num_tokens_across_dp,
                 cudagraph_stats,
-            ) = self._determine_batch_execution_and_padding(
+            ) = self._determine_batch_execution_and_padding( # 10. 쿠다 그래프 쓸건지 확인해서 쓸거면 가장 가깝고 큰 버킷으로 패딩하고 DBO를 쓸거면 두 DP의 크기를 맞추느라 패딩 즉 여기서 말하는건 두 상황을 체크하고 패딩해 실제 forward할 텐서 크기를 만드는 역할임, 추가적으로 하는일은 지금 DP에서 다른 노드와 서로 몇 토큰을 가지고있느지도 공유
                 num_tokens=num_tokens_unpadded,
                 num_reqs=num_reqs,
                 num_scheduled_tokens_np=num_scheduled_tokens_np,
@@ -4562,7 +4562,7 @@ class GPUModelRunner(
                 defer_finalize=defer_kv_connector_finalize,
             ) as kv_connector_output,
         ):
-            model_output = self._model_forward(
+            model_output = self._model_forward( # 11. 드디어 여기서 실제 forward 수행
                 input_ids=input_ids,
                 positions=positions,
                 intermediate_tensors=intermediate_tensors,

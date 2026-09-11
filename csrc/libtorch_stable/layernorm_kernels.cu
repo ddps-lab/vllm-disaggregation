@@ -30,7 +30,7 @@ __global__ void rms_norm_kernel(
   const scalar_t* input_row;
   const scalar_t* weight_row;
   if constexpr (NUM_DIMS == 2) {
-    // 2D for layernorm normal case [batch_size, hidden]
+    // 2D for layernorm normal case [batch_size, hidden] # 23. 여기부터 L:100 까지 RMSnorm실제 연산 수행, 그리고 다시 qwen3_moe L:411로 리턴
     input_row = input + blockIdx.x * input_stride_d2;
     weight_row = weight + blockIdx.x * weight_stride;
   } else if constexpr (NUM_DIMS == 3) {
@@ -218,7 +218,7 @@ fused_add_rms_norm_kernel(
 
 }  // namespace vllm
 
-void rms_norm(torch::stable::Tensor& out,    // [..., hidden_size]
+void rms_norm(torch::stable::Tensor& out,    // [..., hidden_size] # 19. 타고 타고 와서 여기서 RMS norm 커널런치 
               torch::stable::Tensor& input,  // [..., hidden_size]
               std::optional<torch::stable::Tensor> weight, double epsilon) {
   STD_TORCH_CHECK(out.is_contiguous());
@@ -254,7 +254,7 @@ void rms_norm(torch::stable::Tensor& out,    // [..., hidden_size]
   const bool batch_invariant_launch = vllm::vllm_is_batch_invariant();
   const int max_block_size =
       batch_invariant_launch ? 1024 : ((num_tokens < 256) ? 1024 : 256);
-  dim3 grid(num_tokens);
+  dim3 grid(num_tokens); // # 20. grid의 차원(block의 갯수)는 토큰 수 만큼
   const torch::stable::accelerator::DeviceGuard device_guard(
       input.get_device_index());
   const cudaStream_t stream = get_current_cuda_stream();
@@ -267,11 +267,11 @@ void rms_norm(torch::stable::Tensor& out,    // [..., hidden_size]
           const int calculated_vec_size =
               std::gcd(16 / sizeof(scalar_t), hidden_size);
           const int block_size =
-              std::min(hidden_size / calculated_vec_size, max_block_size);
+              std::min(hidden_size / calculated_vec_size, max_block_size); // # 21. 스레드 갯수(블록의 차원)는 알아서 최적화 해놓음 
           dim3 block(block_size);
           VLLM_STABLE_DISPATCH_VEC_SIZE(calculated_vec_size, [&] {
             if (has_weight) {
-              vllm::rms_norm_kernel<scalar_t, vec_size, tensor_rank, true>
+              vllm::rms_norm_kernel<scalar_t, vec_size, tensor_rank, true> // # 22. 실제 rms 커널 런치 하는일을 자세히 볼것
                   <<<grid, block, 0, stream>>>(
                       out.mutable_data_ptr<scalar_t>(),
                       input.const_data_ptr<scalar_t>(), input_stride_d2,

@@ -621,7 +621,7 @@ class EngineCore:
             if draft_token_ids is not None:
                 self.scheduler.update_draft_token_ids(draft_token_ids)
 
-    def step_with_batch_queue(
+    def step_with_batch_queue( # 4. 여기가 스케쥴링 코드
         self,
     ) -> tuple[dict[int, EngineCoreOutputs] | None, bool]:
         """Schedule and execute batches with the batch queue.
@@ -649,9 +649,9 @@ class EngineCore:
         model_executed = False
         deferred_scheduler_output = None
         if self.scheduler.has_requests():
-            scheduler_output = self.scheduler.schedule(self._should_throttle_prefills())
+            scheduler_output = self.scheduler.schedule(self._should_throttle_prefills()) # 5. 여기서 running 중이던 요청의 kv캐시 요구량을 계산하고 여유분만큼 새 요청의 prefill을 붙임(chunked prefill) 여기서 총 토큰수가 정해지고 그게 LHS의 변수에 담김 나중에 꺼내쓸용도
             with self.log_error_detail(scheduler_output):
-                exec_future = self.model_executor.execute_model(
+                exec_future = self.model_executor.execute_model( # 6. 여기서 만든 scheduler output을 들고 모델을 실행하러 감
                     scheduler_output, non_block=True
                 )
             if self.is_ec_consumer:
@@ -2144,13 +2144,13 @@ class DPEngineCoreProc(EngineCoreProc):
         )
 
     @fault_tolerant_wrapper
-    def run_busy_loop(self):
+    def run_busy_loop(self): # 1. 여기가 각 엔진에서 돌아가는 무한 루프 사실상 시작점  
         """Core busy loop of the EngineCore for data parallel case."""
 
         # Loop until process is sent a SIGINT or SIGTERM
         while self._handle_shutdown():
             # 1) Poll the input queue until there is work to do.
-            self._process_input_queue()
+            self._process_input_queue() # 2. API에서 LB로 받은 인풋큐에서 요청을 가져옴
             # Publish request counts before and after GPU step to ensure freshness.
             self._maybe_publish_request_counts()
 
@@ -2166,7 +2166,7 @@ class DPEngineCoreProc(EngineCoreProc):
                 elif not state.commit_requested and state.is_ready_for_switch():
                     self.process_input_queue_block = True
 
-            executed = self._process_engine_step()
+            executed = self._process_engine_step() # 3. 여기가 이제 본격적인 추론시작
             self._maybe_publish_request_counts()
 
             local_unfinished_reqs = self.scheduler.has_unfinished_requests()

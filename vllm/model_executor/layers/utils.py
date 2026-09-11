@@ -89,7 +89,7 @@ def default_unquantized_gemm(
     weight: torch.Tensor,
     bias: torch.Tensor | None = None,
 ):
-    return torch.nn.functional.linear(x, weight, bias)
+    return torch.nn.functional.linear(x, weight, bias) # 27. 여기서 실제 projection 일어남, 안에서 culbas를 호출하고 cublas는 입력 행렬들의 크기와 가중치를 보고 자동으로 텐서코어 작동여부, 타일링 크기등을 정해서 런치해줌 행렬의 크기는 hiddenstate @ 가중치들 concat(GQA라 )
 
 
 def use_aiter_triton_gemm(n, m, k, dtype):

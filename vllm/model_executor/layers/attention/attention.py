@@ -475,7 +475,7 @@ class Attention(nn.Module, AttentionLayerBase):
                 else GroupShape.PER_TENSOR,
             )
 
-    def forward(
+    def forward( # 33. 어텐션하면 여기로 옴
         self,
         query: torch.Tensor,
         key: torch.Tensor,
@@ -556,10 +556,10 @@ class Attention(nn.Module, AttentionLayerBase):
                 and key is not None
                 and value is not None
             ):
-                kv_cache_dummy_dep = torch.ops.vllm.unified_kv_cache_update(
+                kv_cache_dummy_dep = torch.ops.vllm.unified_kv_cache_update( # 34. 방금 만든 토큰의 k와 v값을 gpu에 store 크기는 (토큰수, head dim)으로 아주 작음 이건 무시하장
                     key, value, encoded
                 )
-            torch.ops.vllm.unified_attention_with_output(
+            torch.ops.vllm.unified_attention_with_output( # 35. 여기가 실제 self attetnion 연산이고 flash_attn.py L:915 로 
                 query,
                 key,
                 value,
@@ -567,7 +567,7 @@ class Attention(nn.Module, AttentionLayerBase):
                 encoded,
                 kv_cache_dummy_dep=kv_cache_dummy_dep,
             )
-        return output.view(-1, hidden_size)
+        return output.view(-1, hidden_size) # 39. 어텐션 끝 qwen3_moe.py L:338로 복귀
 
     def extra_repr(self) -> str:
         s = f"head_size={self.impl.head_size}"  # type: ignore

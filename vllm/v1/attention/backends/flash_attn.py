@@ -912,7 +912,7 @@ class FlashAttentionImpl(AttentionImpl):
                 vllm_config.scheduler_config.max_num_batched_tokens
             )
 
-    def forward(
+    def forward( # 36. 여기서 self attention L:1121 까지
         self,
         layer: torch.nn.Module,
         query: torch.Tensor,
@@ -1118,7 +1118,7 @@ class FlashAttentionImpl(AttentionImpl):
                     )
                     causal = not has_window
 
-                flash_attn_varlen_func(
+                flash_attn_varlen_func( # 37. 이걸 호출하면 flashattentio이 호출되고 플래시 어텐션은 내부적으로 head 크기를 보고 타일과 스레드 등 config를 정해 어텐션의 모든 연산 - Concat_h( softmax( (x·W_qʰ)(K ʰ)ᵀ / √128 ) · V ʰ )까지 을 CUTLASS로 tensor core로 수행
                     q=query[:num_actual_tokens],
                     k=key_cache,
                     v=value_cache,
@@ -1144,7 +1144,7 @@ class FlashAttentionImpl(AttentionImpl):
                     mask_mod=rswa_mask_mod_fn or mm_mask_mod,
                     aux_tensors=rswa_aux or mm_aux,
                 )
-                return output
+                return output # 38. 여기서 attention.py L:562로 복귀 output은 아까 위에서 계산한 Concat_h( softmax( (x·W_qʰ)(K ʰ)ᵀ / √128 ) · V ʰ ) 여기까지 아직 W_o matmul 안함
 
         # Cascade attention (rare case).
         cascade_attention(

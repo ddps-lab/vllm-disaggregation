@@ -319,25 +319,25 @@ class Qwen3MoeAttention(nn.Module):
         self.q_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
         self.k_norm = RMSNorm(self.head_dim, eps=rms_norm_eps)
 
-    def forward(
+    def forward( # 25. 어텐션 호출하면 여기로 옴(python __call__ 때문 -> 이거 클로저 맞나요? 응 안중요하죠 ㅋㅋ 오기만 하면 됐죠 ㅋㅋ)
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
     ) -> torch.Tensor:
-        qkv, _ = self.qkv_proj(hidden_states)
-        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1)
+        qkv, _ = self.qkv_proj(hidden_states) # 26. 가중치 프로젝션 먼저
+        q, k, v = qkv.split([self.q_size, self.kv_size, self.kv_size], dim=-1) # 28. 프로젝션 할떄 가중치들은 concat했으니 다시 split
         # Add qk-norm
-        q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim)
+        q_by_head = q.view(*q.shape[:-1], q.shape[-1] // self.head_dim, self.head_dim) # 29. RMS norm인데 이번엔 대상이 q의 head 크기 단위 
         q_by_head = self.q_norm(q_by_head)
         q = q_by_head.view(q.shape)
 
-        k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim)
+        k_by_head = k.view(*k.shape[:-1], k.shape[-1] // self.head_dim, self.head_dim) # 30. 마찬가지 RMS norm인데 이번엔 대상이 k의 head 크기 단위 
         k_by_head = self.k_norm(k_by_head)
         k = k_by_head.view(k.shape)
-        q, k = self.rotary_emb(positions, q, k)
-        attn_output = self.attn(q, k, v)
-        output, _ = self.o_proj(attn_output)
-        return output
+        q, k = self.rotary_emb(positions, q, k) # 31. q와 k ROPE(위치 정보 인코딩)
+        attn_output = self.attn(q, k, v) # 32. 드디어 어텐션
+        output, _ = self.o_proj(attn_output) # 40.어텐션 결과에 W_o 프로젝션을 하고 26번의 가중치 프로젝션과 완전히 같음 
+        return output # 41. 그래서 qwen3_moe L:414 hidden state에 담김
 
 
 class Qwen3MoeDecoderLayer(nn.Module):
@@ -399,25 +399,25 @@ class Qwen3MoeDecoderLayer(nn.Module):
             config.hidden_size, eps=config.rms_norm_eps
         )
 
-    def forward(
+    def forward( # 16. 그래서 여기로 옴 
         self,
         positions: torch.Tensor,
         hidden_states: torch.Tensor,
         residual: torch.Tensor | None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         # Self Attention
-        if residual is None:
+        if residual is None: # 17. 첫 레이어라서 잔차항 residual은 None, 그래서 아래 계산으로 갱신
             residual = hidden_states
-            hidden_states = self.input_layernorm(hidden_states)
+            hidden_states = self.input_layernorm(hidden_states)  # 18. 그리고 항상 블록(어텐션, FFN 들어가기전)에 정규화를 적용함, 두번쨰 레이어부터는 이 아래 else문의 함수에서 residual까지 받아서 잔차 연결 까지 함 (hidden = RMS norm + resiual) 까지 한다는 말
         else:
             hidden_states, residual = self.input_layernorm(hidden_states, residual)
-        hidden_states = self.self_attn(
+        hidden_states = self.self_attn(  # 24. 어텐션 시작
             positions=positions,
             hidden_states=hidden_states,
         )
 
         # Fully Connected
-        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
+        hidden_states, residual = self.post_attention_layernorm(hidden_states, residual) # 42. 끝난 어텐션 rmsnrom + 잔차 연결 (위는 첫 레이어라 잔차연결 없었음), 블록수는 토큰수고 스레드 수는 다른 최적화가 적용됌
         hidden_states = self.mlp(hidden_states)
         return hidden_states, residual
 
@@ -475,7 +475,7 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         return self.embed_tokens(input_ids)
 
-    def forward(
+    def forward( # 13. 그래서 여기로 온다는 말씀
         self,
         input_ids: torch.Tensor | None,
         positions: torch.Tensor,
@@ -486,7 +486,7 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
             if inputs_embeds is not None:
                 hidden_states = inputs_embeds
             else:
-                hidden_states = self.embed_input_ids(input_ids)
+                hidden_states = self.embed_input_ids(input_ids) # 14. 여기서 토큰 임베딩
             residual = None
         else:
             assert intermediate_tensors is not None
@@ -500,7 +500,7 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
             islice(self.layers, self.start_layer, self.end_layer),
             start=self.start_layer,
         ):
-            hidden_states, residual = layer(positions, hidden_states, residual)
+            hidden_states, residual = layer(positions, hidden_states, residual) # 15. 여기서 레이어 시작 어떻게 layer(패러미터)로 실행하냐고? layer는 런타임에 Qwen3MoeDecoderLayer 인스턴스를 받음 얘는 nn.module을 상속받아서 매직메소드__call__(클로저)를 구현해놓음 그래서 이렇게 호출하면 같은 파일 L:409 def forward로 점프~
             self._maybe_add_hidden_state(
                 aux_hidden_states, layer_idx + 1, hidden_states, residual
             )
