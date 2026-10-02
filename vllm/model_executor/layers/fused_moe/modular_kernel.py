@@ -1339,7 +1339,7 @@ class FusedMoEKernelModularImpl:
         elif use_output_alias:
             fused_out = output_alias
 
-        self.fused_experts.apply(
+        self.fused_experts.apply( # 55. 여기서 grouped GEMM을 위한 준비를 함 triton_moe.py L:219로 
             output=fused_out,
             hidden_states=a1q,
             w1=w1,
@@ -1475,7 +1475,7 @@ class FusedMoEKernelModularImpl:
         if global_num_experts == -1:
             global_num_experts = local_num_experts
 
-        a1q, a1q_scale, expert_tokens_meta, topk_ids, topk_weights = self._prepare(
+        a1q, a1q_scale, expert_tokens_meta, topk_ids, topk_weights = self._prepare( # 53. 여기서 dispatch일어남 naive_dp_ep.py 로  
             hidden_states,
             topk_weights,
             topk_ids,
@@ -1491,7 +1491,7 @@ class FusedMoEKernelModularImpl:
         if lora_ctx is not None:
             lora_ctx.original_hidden_states = hidden_states
 
-        fused_out = self._fused_experts(
+        fused_out = self._fused_experts( # 54. 여기서 grouped GEMM을 위한 준비를 함 L:1278로 ㄱㄱ
             in_dtype=hidden_states.dtype,
             a1q=a1q,
             a1q_scale=a1q_scale,
@@ -1511,7 +1511,7 @@ class FusedMoEKernelModularImpl:
         if lora_ctx is not None:
             lora_ctx.original_hidden_states = None
 
-        return self._finalize(
+        return self._finalize( # 74. 위에서 이제 드디어 fused_out애 결과가 들어옴 결과라고 하면 내 rank에서 처리한 토큰들의 가중합 까지를 말하는것, 마지막 남은건 여러 rank간 그 가중합을 합쳐 최종 토큰의 hidden state를 만들어야함 그걸 할거야  
             output,
             fused_out,
             hidden_states,

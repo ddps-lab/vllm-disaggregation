@@ -667,7 +667,7 @@ class EngineCore:
                     grammar_output = self.scheduler.get_grammar_bitmask(
                         scheduler_output
                     )
-                    future = self.model_executor.sample_tokens(
+                    future = self.model_executor.sample_tokens( # 89. 사실 엔진 프로세스는 위 모델실행을 명령 내리자마자 (주석 6번 부터 88번이 하는일들) 바로 샘플링도 워커 프로세스에게 시켜놨었음 
                         grammar_output, non_block=True
                     )
                 else:
@@ -697,7 +697,7 @@ class EngineCore:
             self.capture_iteration_details(scheduler_output) as iteration_details,
             self.log_error_detail(scheduler_output),
         ):
-            model_output = future.result()
+            model_output = future.result() # 94. 그렇게 최종적으로 구한 token_ids를 다음 스케쥴에 쓰기위해 받음 (무한 loop 돌거니까) 
             if model_output is None:
                 # None from sample_tokens() implies that the original execute_model()
                 # call failed - raise that exception.
@@ -735,7 +735,7 @@ class EngineCore:
             future = self.model_executor.sample_tokens(grammar_output, non_block=True)
             batch_queue.appendleft((future, deferred_scheduler_output, exec_future))
 
-        return engine_core_outputs, model_executed
+        return engine_core_outputs, model_executed # 95. token_ids를 api서버로도 보냄. 여기서 한 step 드디어 끝.
 
     def _process_aborts_queue(self):
         if not self.aborts_queue.empty():

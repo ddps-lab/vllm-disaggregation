@@ -4596,8 +4596,8 @@ class GPUModelRunner(
                         kv_connector_output,
                     )
 
-                sample_hidden_states = hidden_states[logits_indices]
-                logits = self.model.compute_logits(sample_hidden_states)
+                sample_hidden_states = hidden_states[logits_indices] # 86. 전체 토큰의 hidden state를 샘플링 할 필요없음 prefill이라면 프롬포트의 마지막 한 토큰만이 다음 토큰을 샘플링 하면 되기 때문 그래서 여기서 hidden state의 디코드,prefill 프롬포트 마지막 한 토큰의 인덱스를 구함 그게 sample_hidden_state
+                logits = self.model.compute_logits(sample_hidden_states) # 87. 위에서 구한걸로 lm_head projection(logit 계산) [13, 2048] × [151,936, 2048]ᵀ → [13, 151,936]. nn.lienar(cublas)를 쓰고 출력 logit은 정확도를위해 fp32
             else:
                 # Rare case.
                 assert not self.is_pooling_model
@@ -4647,7 +4647,7 @@ class GPUModelRunner(
         if deferred_state_corrections_fn:
             deferred_state_corrections_fn()
 
-        return None
+        return None # 88. 그렇게 최종적으로 구한 logit 점수를 버퍼에 써놓고 반환. 여기서 부터 좀 킥인게 있음
 
     def _input_fits_in_drafter(
         self, common_attn_metadata: CommonAttentionMetadata | None
@@ -4665,7 +4665,7 @@ class GPUModelRunner(
         )
 
     @torch.inference_mode
-    def sample_tokens(
+    def sample_tokens( # 90. 그래서 워커프로세스가 이제 기다리고 있던 샘플링 함수도 실행
         self, grammar_output: "GrammarOutput | None"
     ) -> ModelRunnerOutput | AsyncModelRunnerOutput | IntermediateTensors:
         if self.execute_model_state is None:
@@ -4701,7 +4701,7 @@ class GPUModelRunner(
             )
 
         with record_function_or_nullcontext("gpu_model_runner: sample"):
-            sampler_output = self._sample(logits, spec_decode_metadata)
+            sampler_output = self._sample(logits, spec_decode_metadata) # 91. 여기서 실제로 일어남 연산 자세히 보면 샘플링에는 우선 greedy와 random이 있는데 이거 내가 아는 temperture 임 0이면 그리디 아니면 랜덤, 토큰마다도 다르게 할수있음 일단 그리디로 보자
 
         self._update_states_after_model_execute(
             sampler_output.sampled_token_ids, scheduler_output

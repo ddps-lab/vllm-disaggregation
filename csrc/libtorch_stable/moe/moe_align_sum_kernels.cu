@@ -371,7 +371,7 @@ __device__ __forceinline__ bool moe_sum_pad_aware_skip(
 }
 
 template <typename scalar_t, typename idx_t, int TOPK, bool PAD_AWARE>
-__global__ void moe_sum_vec_kernel(
+__global__ void moe_sum_vec_kernel( // # 73. 여기서 sum이 일어남 [토큰수, 8, 2048] 에서 8개씩 더해서 [토큰수, 2048] 완성 나한테 없는 expert의 결과값은 0이라서 걍 다 더해도 됌, 커널은 vllm 자체 커널이고 top-k마다 최적화된 커널은 선택하긴하는데 연산 메모리 load 둘다 매우적어서 의미는없음 런치바운드임 
     scalar_t* __restrict__ out,          // [num_tokens, d], contiguous
     const scalar_t* __restrict__ input,  // [num_tokens, topk, d], d contiguous
     const int64_t num_tokens, const int d, const int64_t stride_token,

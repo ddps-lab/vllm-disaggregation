@@ -216,7 +216,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
         output = (M, K)
         return (workspace1, workspace2, output)
 
-    def apply(
+    def apply( # 56. 여기부터 L: 328까지가 groupedGEMM을 위한 준비
         self,
         output: torch.Tensor,
         hidden_states: torch.Tensor,
@@ -281,7 +281,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
         if global_num_experts == -1:
             global_num_experts = E
 
-        config = try_get_optimal_moe_config(
+        config = try_get_optimal_moe_config( # 57. GEMM의 커널런치 config(타일 행크기, 타일 열크기, stage 등을 정함) GPU, d_type, FFN GEMM크기(토큰수와 expert수가 정함)마다 최적화해서 vllm이 올려둔 json파일이 있고 fused_moe  get_config_file_name()에서 확인 가능, 만약 없다면 default_config 사용
             w1.size(),
             w2.size(),
             top_k_num,
@@ -313,7 +313,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
         )
         intermediate_cache3 = _resize_cache(workspace2, (num_tokens, top_k_num, K))
 
-        sorted_token_ids, expert_ids, num_tokens_post_padded = (
+        sorted_token_ids, expert_ids, num_tokens_post_padded = ( # 58. 여기가 진짜 준비 moe_align_block_size.py L:11 에서 로직이 일어남
             _prepare_expert_assignment(
                 topk_ids,
                 config,
@@ -428,7 +428,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
             ) = lora_meta
             intermediate_cache1.add_(lora_delta_w13)
         else:
-            _base_w13_fn()
+            _base_w13_fn() # 60.token_ids랑 expert ids만들고 여기로 옴, L:370 이 함수 호출 거기로 갈게  (nested function)
             if lora_context is not None:
                 (
                     sorted_token_ids_lora,
@@ -466,7 +466,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
                 quant_dtype=current_platform.fp8_dtype(),
             )
         else:
-            self.activation(
+            self.activation( # 66. 앞에서 구한 [토큰수, 8, 1536]을 행으로 나눠 gate와 up activation을 나누고 silu(up) x gate를 함 결과는 [토큰수, 8, 768] 커널은 vllm 자체 최적화 커널 사용 메모리 load,store,연산 모두 적어서 사실상 launch bound. 기억하면 좋을건 1. 연산은 fp32 저장은 bf16 (사실 이 모델은 모든 컴포넌트가 그럼 연산은 32 저장은 16) 2.남의 토큰수, 8 자리는 0으로 되어있을텐데 이거까지 계산해버려서 버리는 연산 있음을 기억 3. GEMM이 아니기 떄문에 텐서코어가 아닌 쿠다 코어 사용
                 activation, intermediate_cache2, intermediate_cache1.view(-1, N)
             )
 
@@ -538,7 +538,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
             )
             intermediate_cache3.add_(lora_delta_w2)
         else:
-            _base_w2_fn()
+            _base_w2_fn() # 67. 두번째 GEMM, down projection
             if lora_context is not None:
                 self.apply_w2_lora(
                     lora_context,
@@ -559,7 +559,7 @@ class TritonExperts(LoRAExpertsMixin, mk.FusedMoEExpertsModular):
         self.moe_sum(intermediate_cache3, output)
 
     def moe_sum(self, input: torch.Tensor, output: torch.Tensor) -> None:
-        ops.moe_sum(input, output)
+        ops.moe_sum(input, output) # 72. down projection에 가중치까지 곱한 activation [토큰수, 8, 2048]을 토큰마다 8개를 합쳐서 마지막 ㄹㅇ hidden state만듬 
 
 
 class TritonWNA16Experts(TritonExperts):

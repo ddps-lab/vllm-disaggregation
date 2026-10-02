@@ -142,11 +142,11 @@ class AgRsAll2AllManager(All2AllManagerBase):
         Reduce-scatter hidden_states across all dp ranks.
         """
         dist_group = self._get_comm_group(is_sequence_parallel)
-        sizes = self._get_sizes(
+        sizes = self._get_sizes( # 77. 통신 전 서로 얼만큼 교환해야하는지 미리 사이즈 구하는것
             hidden_states.shape[0] // dist_group.world_size,
             dist_group,
         )
-        hidden_states = dist_group.reduce_scatterv(hidden_states, dim=0, sizes=sizes)
+        hidden_states = dist_group.reduce_scatterv(hidden_states, dim=0, sizes=sizes) # 78. 구한 사이즈 넘김
         return hidden_states
 
     def destroy(self):

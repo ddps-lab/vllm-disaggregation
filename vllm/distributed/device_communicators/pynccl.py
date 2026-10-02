@@ -219,7 +219,7 @@ class PyNcclCommunicator:
             cudaStream_t(stream.cuda_stream),
         )
 
-    def all_gatherv(
+    def all_gatherv( # 54.2 broad cast를 통해 실제 hidden_states, topk_ids, topk_weights 를 교환하고 모든 RANk가 같은 전체토큰의 텐서를 가짐
         self,
         output_tensor: torch.Tensor,
         input_tensor: torch.Tensor,
@@ -282,7 +282,7 @@ class PyNcclCommunicator:
             cudaStream_t(stream.cuda_stream),
         )
 
-    def reduce_scatterv(
+    def reduce_scatterv( # 79. 사이즈 까지 구했고 실제 통신 수행은 이 함수에서 일어남
         self,
         output_tensor: torch.Tensor,
         input_tensor: torch.Tensor,
@@ -304,9 +304,9 @@ class PyNcclCommunicator:
 
         split_offset = 0
         self.nccl.ncclGroupStart()
-        for root, split_size in enumerate(sizes):
+        for root, split_size in enumerate(sizes): # 80. 여기서 통신 각 expert의 FFN결과가 원래 그 주인 rank한테 가서 진짜 hidden state가 만들어짐
             chunk = input_tensor[split_offset : split_offset + split_size, ...]
-            self.nccl.ncclReduce(
+            self.nccl.ncclReduce( # 81. ring 알고리즘 reduce이 강제됌 우리환경에서는 그래서 모든 DP가 자신의 토큰의 hidden state만 가짐.
                 buffer_type(chunk.data_ptr()),
                 buffer_type(output_tensor.data_ptr()),
                 chunk.numel(),
@@ -317,7 +317,7 @@ class PyNcclCommunicator:
                 cudaStream_t(stream.cuda_stream),
             )
             split_offset += split_size
-        self.nccl.ncclGroupEnd()
+        self.nccl.ncclGroupEnd() # 82. 위 과정(Reduce)를 총 rank수만큼 하는데 따로따로 직렬로 하지않고 한번에 수행함 ncclGroupedEnd 덕분 그랬을때의 시간 모델링이 어떻게 일어나는지 공부 할 필요잇음(보내는 양은 같아서 상관없는거 같긴함)
 
     def send(self, tensor: torch.Tensor, dst: int, stream=None):
         if self.disabled:

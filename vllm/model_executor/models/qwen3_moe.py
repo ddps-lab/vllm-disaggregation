@@ -418,8 +418,8 @@ class Qwen3MoeDecoderLayer(nn.Module):
 
         # Fully Connected
         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual) # 42. 끝난 어텐션 rmsnrom + 잔차 연결 (위는 첫 레이어라 잔차연결 없었음), 블록수는 토큰수고 스레드 수는 다른 최적화가 적용됌
-        hidden_states = self.mlp(hidden_states)
-        return hidden_states, residual
+        hidden_states = self.mlp(hidden_states) # 43. mlp 시작
+        return hidden_states, residual # 83. 드디어 forward끝 이게 1 layer forward고 이게 레이어 갯수만큼 반복됌 
 
 
 @support_torch_compile
@@ -509,12 +509,12 @@ class Qwen3MoeModel(nn.Module, EagleModelMixin):
             return IntermediateTensors(
                 {"hidden_states": hidden_states, "residual": residual}
             )
-        hidden_states, _ = self.norm(hidden_states, residual)
+        hidden_states, _ = self.norm(hidden_states, residual) # 84. 모든 레이어가 끝난상황(1 layer forward를 48번 반복)후에 L:503 에서 여기로 옴 이전에 했던 RMS norm + residual 과 완전히 같음
 
         # Return auxiliary hidden states if collected
         if len(aux_hidden_states) > 0:
             return hidden_states, aux_hidden_states
-        return hidden_states
+        return hidden_states # 85. 최종 return gpu_model_runner.py L:4565 로 반환
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         loader = AutoWeightsLoader(

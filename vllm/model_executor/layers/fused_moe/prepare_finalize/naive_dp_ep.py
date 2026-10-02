@@ -155,7 +155,7 @@ class MoEPrepareAndFinalizeNaiveDPEPModular(mk.FusedMoEPrepareAndFinalizeModular
                 extra_tensors = []
             extra_tensors.append(local_token_lora_mapping)
 
-        res = get_ep_group().dispatch(
+        res = get_ep_group().dispatch( # 54. 여기서 dispatch가 일어나는데 기본 백엔드가 all gather scatter라 모든 expert한테 정보를 보내버림, 정보라고 하면 자기 토큰의 hidden state, top 8 가중치, top 8 expert 순위 3개 그리고 여기서 처음으로 gpu들끼리 동기화(모두가 여기 통신이 끝나기 전까지 기다림)
             a1q,
             topk_weights,
             topk_ids,
@@ -182,9 +182,9 @@ class MoEPrepareAndFinalizeNaiveDPEPModular(mk.FusedMoEPrepareAndFinalizeModular
             else:
                 a1q_scale = a1q_scale_orig
 
-        return a1q, a1q_scale, None, topk_ids, topk_weights
+        return a1q, a1q_scale, None, topk_ids, topk_weights # 55. 통신이 끝나고 돌아와서 모든 gpu가 전체 토큰에 대한 3가지 정보를 가지고있음. 그걸 리턴
 
-    def finalize(
+    def finalize( # 75. 그래서 여기로 옴
         self,
         output: torch.Tensor,
         fused_expert_output: torch.Tensor,
@@ -204,7 +204,7 @@ class MoEPrepareAndFinalizeNaiveDPEPModular(mk.FusedMoEPrepareAndFinalizeModular
             apply_router_weight_on_input=apply_router_weight_on_input,
         )
 
-        output.copy_(
+        output.copy_( # 76. 여기가 실제 가중합 주고받는 combine 통신이 일어나는구간 reduce scatter쓸거 자세히 보자
             get_ep_group().combine(out, is_sequence_parallel=self.is_sequence_parallel)
         )
 

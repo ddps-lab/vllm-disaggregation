@@ -239,7 +239,7 @@ class Sampler(nn.Module):
 
     @staticmethod
     def greedy_sample(logits: torch.Tensor) -> torch.Tensor:
-        return logits.argmax(dim=-1).view(-1)
+        return logits.argmax(dim=-1).view(-1) # 93. 여기서 진짜 argmax로 확률 logits [토큰수, 151,936] 을 다음 토큰 ids [토큰수] 로 바꿈 argmax는 단순 가장 큰 값을 찾는 연산임 softmax랑 헷갈 ㄴㄴ. 그리고 커널은 pytoch 내부 최적화 커널 사용 근데 애초에 연산도 읽기도 그렇게 많지않아서 런치 바운드
 
     def sample(
         self,
@@ -259,7 +259,7 @@ class Sampler(nn.Module):
             greedy_sampled = None
         else:
             greedy_sampled = self.greedy_sample(logits)
-            if sampling_metadata.all_greedy:
+            if sampling_metadata.all_greedy: # 92. 여기서 all 그리디라서 그리디 경로를 탐
                 processed_logprobs = None
                 if (
                     sampling_metadata.max_num_logprobs is not None

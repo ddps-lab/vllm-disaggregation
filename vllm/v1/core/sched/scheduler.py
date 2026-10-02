@@ -474,6 +474,7 @@ class Scheduler(SchedulerInterface):
         return max(num_new_tokens, 0)
 
     def schedule(self, throttle_prefills: bool = False) -> SchedulerOutput:
+        # 5. 배치 스케쥴링 자세히 보기위함. 여기 부터 보면 됌
         self.current_step += 1
         # NOTE(woosuk) on the scheduling algorithm:
         # There's no "decoding phase" nor "prefill phase" in the scheduler.
@@ -520,7 +521,7 @@ class Scheduler(SchedulerInterface):
             throttle_prefills and not self.prefill_capacity_bound
         ) and any(not r.is_prefill_chunk for r in self.running)
 
-        # First, schedule the RUNNING requests.
+        # First, schedule the RUNNING requests. # 5. running 중이던 요청 (이미 한 토큰이라도 forward를 타서 한 토큰이라도 kv캐시가 저장된 요청)을 우선적으로 스케쥴링 함. while문이니까 요청 하나씩에 대해서 지금 스케쥴링을 하는것
         req_index = 0
         while req_index < len(self.running) and token_budget > 0:
             request = self.running[req_index]
@@ -555,14 +556,14 @@ class Scheduler(SchedulerInterface):
                 req_index += 1
                 continue
 
-            num_new_tokens = (
+            num_new_tokens = ( # 5. 먼저 running 요청의 요구 토큰량 계산. chunked를 진행 했던 prefill 요청이라면 남은 토큰양, 디코드면 1
                 request.num_tokens_with_spec
                 + request.num_output_placeholders
                 - request.num_computed_tokens
             )
-            if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens:
+            if 0 < self.scheduler_config.long_prefill_token_threshold < num_new_tokens: # 5. 한 요청의 chuncked prefill의 상한선을 정하는 config, 보통은 0 으로 셋팅 되어있음.
                 num_new_tokens = self.scheduler_config.long_prefill_token_threshold
-            num_new_tokens = min(
+            num_new_tokens = min( # 5. 요청 하나씩 돌면서 전체 허용 토큰수를 넘지 않게 확인 - running 요청의 첫번쨰 조건 확인
                 num_new_tokens, token_budget, input_budget - draft_slots
             )
 
@@ -628,7 +629,7 @@ class Scheduler(SchedulerInterface):
             # Schedule newly needed KV blocks for the request.
             with record_function_or_nullcontext("schedule: allocate_slots"):
                 while True:
-                    new_blocks = self.kv_cache_manager.allocate_slots(
+                    new_blocks = self.kv_cache_manager.allocate_slots( # 5. 두번째 running 요청의 조건 확인 - 위에서 최대 토큰수를 만족한 요청들에 대해 실제 kv캐시를 저장할 공간이 있나 확인하고 할당, 만약 자리가없으면 ruuning 중이던 요청에서 가장 나중의 요청 (FCFS)의 kv캐시 block을 evict해서 kv캐시 공간확보
                         request,
                         num_new_tokens,
                         num_lookahead_tokens=self.num_lookahead_tokens,
@@ -748,7 +749,7 @@ class Scheduler(SchedulerInterface):
         if not preempted_reqs and self._pause_state == PauseState.UNPAUSED:
             step_skipped_waiting = create_request_queue(self.policy)
 
-            while (self.waiting or self.skipped_waiting) and token_budget > 0:
+            while (self.waiting or self.skipped_waiting) and token_budget > 0: # 5. running 요청 처리후 wait(아직 kv캐시가 한 토큰도 생성되지않은 요청)을 스케쥴함 어떨때? 토큰수 상한, 요청수 상한, running 요청에서 kv 캐시 evict가 없었을때
                 if input_budget <= draft_slots:
                     break
                 # Paused streaming sessions (WAITING_FOR_STREAMING_REQ) are not
@@ -815,7 +816,7 @@ class Scheduler(SchedulerInterface):
                         num_new_local_computed_tokens,
                         request.shared_prefix_boundary,
                         hit_diverged,
-                    ) = self._get_local_prefix_cache_hit(request)
+                    ) = self._get_local_prefix_cache_hit(request) # 5. 그래서 waiting 요청 prefix caching 할거 있나 체크하고 그거 뺴고 몇 토큰 forward 해야하나 계산
 
                     # Get externally-cached tokens if using a KVConnector.
                     if self.connector is not None:
@@ -1132,7 +1133,7 @@ class Scheduler(SchedulerInterface):
                 num_scheduled_tokens[request_id] = num_new_tokens
                 token_budget -= num_new_tokens
                 input_budget -= num_new_tokens + draft_slots
-                request.status = RequestStatus.RUNNING
+                request.status = RequestStatus.RUNNING # 5. prefix 까지 뺀 그 prefill 요청 메모리에 들어간다면 running으로 바꾸고 진행할 총 토큰수에 추가 
                 request.num_computed_tokens = num_computed_tokens
                 if pad_spec_decode:
                     scheduled_spec_decode_tokens[request_id] = [
@@ -1167,7 +1168,7 @@ class Scheduler(SchedulerInterface):
                 self.prefill_capacity_bound = bool(self.waiting)
 
         # Check if the scheduling constraints are satisfied.
-        total_num_scheduled_tokens = sum(num_scheduled_tokens.values())
+        total_num_scheduled_tokens = sum(num_scheduled_tokens.values()) # 5. 그래서 최종 총 토큰수를 정해서 worker에 넘길 자료구조 SchedulerOutput에 넣음
         assert total_num_scheduled_tokens <= self.max_num_scheduled_tokens
 
         assert token_budget >= 0

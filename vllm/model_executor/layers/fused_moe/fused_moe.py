@@ -296,7 +296,7 @@ def fused_moe_kernel_gptq_awq(
 
 
 @triton.jit
-def fused_moe_kernel(
+def fused_moe_kernel( # 61. Triton은 GPU 커널을 파이썬 문법으로 쓰게 해 주는 컴파일러 그래서 이거 커널런치 맞고 아래서 커널이 할일을 기술 할일은 아래서 하나씩 보자 모두 하나의 커널이 하는일을 기술하는것 (하나의 커널 = 특정 토큰들과 한개의 expert를 GEMM) # 70. down 프로젝션도 똑같이 여기와서 실행 gate up 프로젝션과 모든 과정이 같음, 유일하게 달라지는건 down 프로젝션을 한후 expert가중치를 곱한는거 까지가 추가됌
     # Pointers to matrices
     a_ptr,
     b_ptr,
@@ -407,7 +407,7 @@ def fused_moe_kernel(
         return
     if not naive_block_assignment:
         offs_token_id = pid_m * BLOCK_SIZE_M + offs
-        offs_token = tl.load(sorted_token_ids_ptr + offs_token_id)
+        offs_token = tl.load(sorted_token_ids_ptr + offs_token_id) # 62. sorted_token_ids에서 내 타일의 i를 읽음 이거하려고 아까 행 크기로 패딩한것
     else:
         offs_token = tl.where(
             offs == 0,
@@ -471,11 +471,11 @@ def fused_moe_kernel(
     else:
         a_ptrs = a_ptr + (
             offs_token[:, None] // top_k * stride_am + offs_k[None, :] * stride_ak
-        )
+        ) # 63. 위에서 읽은 i / 8 로 내 expert의 토큰을 찾음 -> hiddenstate에서 무슨 행을 읽어올지 암 
         b_ptrs = (
             b_ptr
             + off_experts * stride_be
-            + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn)
+            + (offs_k[:, None] * stride_bk + offs_bn[None, :] * stride_bn) # 64. 내 타일이 읽을 expert의 가중치 찾음
         )
     if use_int8_w8a16:
         b_scale_ptrs = (
@@ -517,7 +517,7 @@ def fused_moe_kernel(
         accumulator = tl.zeros((BLOCK_SIZE_N, BLOCK_SIZE_M), dtype=tl.float32)
     else:
         accumulator = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
-    for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)):
+    for k in range(0, tl.cdiv(K, BLOCK_SIZE_K)): # 65. 여기가 이제 진짜 텐서코어를 활용한 연산(위 주석의 로직들은 행렬의 시작 주소만 계산한것) 하는건 우선 expert마다 토큰을 찾아서, [토큰,hidden_dim] @ [2048,1536] 을 하고싶은것 [2048,1536]은 up,gate를 concat한 weight. 그리고 여러개의 타일이 하나의 expert의 shard를 나눠서 맡음. 앞에서 tile의 행,열 크기를 정했기 때문에 결과 행렬의 행/tile 행 x 결과 행렬의 열/tile 열 이 타일의 갯수. 그래서 이제 타일이 하는일을 기술하자면 토큰의 hiddenstate와, expert의 특정 shard을 읽어서 [64 × 2048] × [2048 × 128] 크기로 맞춰 패딩해서 연산을 넣음. 여기도 마찬가지로 타일의 크기가 64 128로 나와서 연산크기가 이렇게 나온것. 그래서 만약 한 expert의 hidden이 64개 이하라 패딩한값이 있으면 버리는 연산이 생김. (왜 근데 굳이 64로 했을까 타일의 행크기를? tensor core가 요구하는 최소 단위는 16행으로만 하면 버리는게 거의 없는거 아닌가? -> 해결완료 trade off임 타일의 크기가 작아지는 만큼 행타일이 늘어나고 그 행타일들이 가중치를 중복으로 load해서 가중치 대역폭 사용량과 연산량의 trade off임)
         # Load the next block of A and B, generate a mask by checking the
         # K dimension.
         if USE_TD:
@@ -590,7 +590,7 @@ def fused_moe_kernel(
     # This multiplication MUST be performed in float32 before any precision
     # conversion to ensure numerical stability, which is especially critical
     # on ROCm platforms.
-    if MUL_ROUTED_WEIGHT:
+    if MUL_ROUTED_WEIGHT: # 71. down GEMM 후 가중치 곱을 하는 역할. up gate GEMM은 MUL_ROUTED_WEIGHT가 false라 건너뛰었고 지금은 실행. 역시 연산은 fp32 activation 저장은 bf16
         moe_weight = tl.load(
             topk_weights_ptr + offs_token,
             mask=token_mask,
@@ -760,7 +760,7 @@ def invoke_fused_moe_wna16_triton_kernel(
     )
 
 
-def invoke_fused_moe_triton_kernel(
+def invoke_fused_moe_triton_kernel( # 68. down projection 하러 여기로 옴
     A: torch.Tensor,
     B: torch.Tensor,
     C: torch.Tensor,
@@ -820,7 +820,7 @@ def invoke_fused_moe_triton_kernel(
         assert B_scale is None
 
     M = A.size(0)
-    num_tokens = M * top_k
+    num_tokens = M * top_k # 대체 씨발 이 코드가 왜필요한거임? 진짜 코드 꼬라지 
     if sorted_token_ids is not None:
         EM = sorted_token_ids.size(0)
         if A.size(0) < config["BLOCK_SIZE_M"]:
@@ -857,7 +857,7 @@ def invoke_fused_moe_triton_kernel(
             BLOCK_SIZE_K,
         )
         use_td = False
-    fused_moe_kernel[grid](
+    fused_moe_kernel[grid]( # 69. down 프로젝션 에서 각자 타일이 연산할 expert의 shard와 hidden state를 정하는게 여기까지 였고 이제 그걸로 커널 런치
         A,
         B,
         C,

@@ -567,7 +567,7 @@ class MoERunner(MoERunnerInterface):
             assert shared_experts_input is not None
             self._shared_experts(shared_experts_input, order)
 
-    def _apply_quant_method(
+    def _apply_quant_method( # 49. 여기로 옴
         self,
         hidden_states: torch.Tensor,
         router_logits: torch.Tensor,
@@ -584,7 +584,7 @@ class MoERunner(MoERunnerInterface):
             shared_experts_input, SharedExpertsOrder.NO_OVERLAP
         )
 
-        if self.routed_experts.quant_method.is_monolithic:
+        if self.routed_experts.quant_method.is_monolithic: # 50. 두종류가 있음 monolithic과 modular 우리는 modular라 아래 else문을 실행
             # Monolithic kernels: pass router_logits to routed_experts
             fused_out = self.routed_experts.forward_monolithic(
                 x=hidden_states,
@@ -593,14 +593,14 @@ class MoERunner(MoERunnerInterface):
             )
         else:
             # Modular kernels: select experts first, then call routed_experts
-            topk_weights, topk_ids = self.router.select_experts(
+            topk_weights, topk_ids = self.router.select_experts( # 51. softmax로 topk expert 종류, topk expert 가중치를 구함. topk_softmax_kernels.cu (L:822)의 softmax 커널 호출 cuBLAS없이 dtype와 expert갯수로 최적화된 커널 launch
                 hidden_states=hidden_states,
                 router_logits=router_logits,
                 topk_indices_dtype=self._quant_method.topk_indices_dtype,
                 input_ids=input_ids,
             )
 
-            fused_out = self.routed_experts.forward_modular(
+            fused_out = self.routed_experts.forward_modular( # 52. 여기서 dispatch, FFN, combine이 다 일어남 자세히 보자
                 x=hidden_states,
                 topk_weights=topk_weights,
                 topk_ids=topk_ids,
@@ -695,7 +695,7 @@ class MoERunner(MoERunnerInterface):
         # the original hidden states as ``shared_experts_input``; skip the
         # transform in that case so shared experts still see the original input.
         if shared_experts_input is None:
-            hidden_states, shared_experts_input = self.apply_routed_input_transform(
+            hidden_states, shared_experts_input = self.apply_routed_input_transform( # 44. latent moe용 hidden states 입력변환. 우리는 해당 없음
                 hidden_states
             )
 
@@ -827,7 +827,7 @@ class MoERunner(MoERunnerInterface):
         else:
             return hidden_states
 
-    def _forward_impl(
+    def _forward_impl( # 45. 여기에서 moe가 전부 일어남
         self,
         hidden_states: torch.Tensor,
         router_logits: torch.Tensor,
@@ -850,7 +850,7 @@ class MoERunner(MoERunnerInterface):
         self.routed_experts._ensure_moe_quant_config_init()
 
         # Sync aux and main stream for shared expert multi-stream overlap.
-        self._maybe_sync_shared_experts_stream(shared_experts_input)
+        self._maybe_sync_shared_experts_stream(shared_experts_input) # 46. shared expert가 있는 모델은 별도의 스트림에 shared expert 커널런치를 따로 하기 위해 있음
 
         # If the Runner holds the gate, apply it after the stream sync,
         # so it can run overlapped with the
@@ -860,7 +860,7 @@ class MoERunner(MoERunnerInterface):
                 self._maybe_fuse_gate_weights()
                 router_logits = F.linear(hidden_states, self._combined_gate_weight)
             else:
-                router_logits, _ = self.gate(hidden_states)
+                router_logits, _ = self.gate(hidden_states) # 47. gate계산(각 토큰이 exepert에 대해 라우팅 행렬을 곱한 값) 이것도 util.py L:92 torch.nn.functional.linear을 통해 cuBLAS GEMM연산을 하고 크기는 [토큰수,hidden dim] @ [128,2048] = [토큰수,128] 
 
         with self._sequence_parallel_context():
             # TODO(bnell): parts of the dispatch/combine steps will go away once
@@ -871,7 +871,7 @@ class MoERunner(MoERunnerInterface):
                 router_logits,
             )
 
-            shared_output, hidden_states = self._apply_quant_method(
+            shared_output, hidden_states = self._apply_quant_method( # 48. gate 계산값 -> 점수로 만들고 top - k 만듬. 자세히 볼게
                 hidden_states=hidden_states,
                 router_logits=router_logits,
                 shared_experts_input=shared_experts_input,
